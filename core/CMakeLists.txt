@@ -40,7 +40,11 @@ add_library(ali_core STATIC
   src/crawler/html_parser.cpp
   src/crawler/deduplicator.cpp
   src/crawler/segment_builder.cpp
+  src/crawler/crawler.cpp
   src/crawler/resource_controller.cpp
+
+  # ── Index (Phase 4 navigation + Phase 10 compaction) ─────────────────────
+  src/index/compaction.cpp
 )
 
 target_include_directories(ali_core

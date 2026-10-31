@@ -95,4 +95,62 @@ Java_com_ali_search_AliEngine_nativeFlush(JNIEnv*, jclass, jlong handle) {
     return ali_index_flush(reinterpret_cast<AliEngine*>(handle));
 }
 
+// ── Crawler ───────────────────────────────────────────────────────────────────
+
+JNIEXPORT jint JNICALL
+Java_com_ali_search_AliEngine_nativeCrawlerStart(JNIEnv*, jclass, jlong handle) {
+    return ali_crawler_start(reinterpret_cast<AliEngine*>(handle));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_ali_search_AliEngine_nativeCrawlerPause(JNIEnv*, jclass, jlong handle) {
+    return ali_crawler_pause(reinterpret_cast<AliEngine*>(handle));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_ali_search_AliEngine_nativeCrawlerStop(JNIEnv*, jclass, jlong handle) {
+    return ali_crawler_stop(reinterpret_cast<AliEngine*>(handle));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_ali_search_AliEngine_nativeCrawlerEnqueue(JNIEnv* env, jclass,
+                                                    jlong handle, jstring url) {
+    const char* u = env->GetStringUTFChars(url, nullptr);
+    const jint rc = ali_crawler_enqueue_url(reinterpret_cast<AliEngine*>(handle), u);
+    env->ReleaseStringUTFChars(url, u);
+    return rc;
+}
+
+// ── Statistics ────────────────────────────────────────────────────────────────
+
+JNIEXPORT jint JNICALL
+Java_com_ali_search_AliEngine_nativeDocCount(JNIEnv* env, jclass,
+                                              jlong handle, jlongArray out) {
+    uint64_t count = 0;
+    const jint rc = ali_stats_doc_count(reinterpret_cast<AliEngine*>(handle), &count);
+    const jlong val = static_cast<jlong>(count);
+    env->SetLongArrayRegion(out, 0, 1, &val);
+    return rc;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_ali_search_AliEngine_nativeSegmentCount(JNIEnv* env, jclass,
+                                                  jlong handle, jintArray out) {
+    uint32_t count = 0;
+    const jint rc = ali_stats_segment_count(reinterpret_cast<AliEngine*>(handle), &count);
+    const jint val = static_cast<jint>(count);
+    env->SetIntArrayRegion(out, 0, 1, &val);
+    return rc;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_ali_search_AliEngine_nativeIndexBytes(JNIEnv* env, jclass,
+                                                jlong handle, jlongArray out) {
+    uint64_t bytes = 0;
+    const jint rc = ali_stats_index_bytes(reinterpret_cast<AliEngine*>(handle), &bytes);
+    const jlong val = static_cast<jlong>(bytes);
+    env->SetLongArrayRegion(out, 0, 1, &val);
+    return rc;
+}
+
 } // extern "C"

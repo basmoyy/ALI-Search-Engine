@@ -121,16 +121,16 @@ Key invariants enforced in code:
 | Phase | Deliverable                              | Status         |
 |-------|------------------------------------------|----------------|
 | 0     | Requirements and test corpus             | ✅ Done         |
-| 1     | Correct baseline C++ inverted index      | ✅ In progress  |
-| 2     | Immutable segmented binary format        | ✅ In progress  |
+| 1     | Correct baseline C++ inverted index      | ✅ Done         |
+| 2     | Immutable segmented binary format        | ✅ Done         |
 | 3     | Posting-list compression (VByte baseline) | ✅ Done        |
-| 4     | Compact navigation (FST or sparse dict)  | 🔲 Planned     |
-| 5     | ALI Scanner with block instrumentation   | ✅ Skeleton     |
-| 6     | Block-Max WAND + equivalence tests       | 🔲 Planned     |
+| 4     | Compact navigation (sparse dictionary)   | ✅ Done         |
+| 5     | ALI Scanner with block instrumentation   | ✅ Done         |
+| 6     | Block-Max WAND + equivalence tests       | ✅ Done         |
 | 7     | Locality Memory and bounded cache        | ✅ Done         |
-| 8     | Resource-aware polite crawler            | 🔲 Planned     |
-| 9     | Android integration and low-end profiling | ✅ Skeleton    |
-| 10    | 1M-document scale test, compaction, hardening | 🔲 Planned |
+| 8     | Resource-aware polite crawler            | ✅ Done (network I/O pending Phase 9) |
+| 9     | Android integration and low-end profiling | ✅ Done (JNI + WorkManager) |
+| 10    | 1M-document scale test, compaction, hardening | ✅ Compaction implemented; benchmark pending |
 
 ---
 

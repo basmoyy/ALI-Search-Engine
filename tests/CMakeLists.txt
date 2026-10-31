@@ -19,6 +19,10 @@ add_executable(ali_unit_tests
   unit/test_query_planner.cpp
   unit/test_scanner.cpp
   unit/test_crawl_status.cpp
+  unit/test_html_parser.cpp
+  unit/test_deduplicator.cpp
+  unit/test_url_frontier.cpp
+  unit/test_fetcher.cpp
 )
 
 target_link_libraries(ali_unit_tests

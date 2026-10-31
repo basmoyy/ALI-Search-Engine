@@ -48,6 +48,51 @@ class AliEngine private constructor(private val handle: Long) {
     /** Flush pending documents to a published segment. */
     fun flush(): Boolean = nativeFlush(handle) == 0
 
+    // ── Crawler control ───────────────────────────────────────────────────────
+
+    /**
+     * Start the background crawler. Returns immediately; work runs on internal
+     * threads inside the C++ core. Use [AliCrawlerWorker] for Android lifecycle
+     * management — do not call this from the UI thread directly.
+     */
+    fun crawlerStart(): Boolean  = nativeCrawlerStart(handle)  == 0
+
+    /** Gracefully pause the crawler (completes in-flight requests). */
+    fun crawlerPause(): Boolean  = nativeCrawlerPause(handle)  == 0
+
+    /** Stop the crawler and wait for all threads to exit. */
+    fun crawlerStop(): Boolean   = nativeCrawlerStop(handle)   == 0
+
+    /**
+     * Enqueue a URL for crawling. The URL is persisted in SQLite so it
+     * survives process death and will be crawled when conditions permit.
+     */
+    fun crawlerEnqueue(url: String): Boolean =
+        nativeCrawlerEnqueue(handle, url) == 0
+
+    // ── Statistics ────────────────────────────────────────────────────────────
+
+    /** Total documents indexed since the engine was opened. */
+    fun docCount(): Long {
+        val out = LongArray(1)
+        nativeDocCount(handle, out)
+        return out[0]
+    }
+
+    /** Number of active (non-tombstoned) segments. */
+    fun segmentCount(): Int {
+        val out = IntArray(1)
+        nativeSegmentCount(handle, out)
+        return out[0]
+    }
+
+    /** Total on-disk size of the index in bytes. */
+    fun indexBytes(): Long {
+        val out = LongArray(1)
+        nativeIndexBytes(handle, out)
+        return out[0]
+    }
+
     /** Release native resources. Call from onDestroy or a coroutine scope cleanup. */
     fun close() {
         nativeClose(handle)
@@ -81,5 +126,12 @@ class AliEngine private constructor(private val handle: Long) {
             handle: Long, url: String, title: String, body: String
         ): Int
         @JvmStatic private external fun nativeFlush(handle: Long): Int
+        @JvmStatic private external fun nativeCrawlerStart(handle: Long): Int
+        @JvmStatic private external fun nativeCrawlerPause(handle: Long): Int
+        @JvmStatic private external fun nativeCrawlerStop(handle: Long): Int
+        @JvmStatic private external fun nativeCrawlerEnqueue(handle: Long, url: String): Int
+        @JvmStatic private external fun nativeDocCount(handle: Long, out: LongArray): Int
+        @JvmStatic private external fun nativeSegmentCount(handle: Long, out: IntArray): Int
+        @JvmStatic private external fun nativeIndexBytes(handle: Long, out: LongArray): Int
     }
 }
