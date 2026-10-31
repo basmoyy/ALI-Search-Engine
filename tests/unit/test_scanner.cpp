@@ -83,7 +83,8 @@ TEST_F(ScannerTest, FindsDocumentByTerm) {
 
     // Both doc 1 and doc 3 contain "fox".
     EXPECT_GE(resp.results.size(), 1u);
-    EXPECT_GT(resp.elapsed_ms, 0u);
+    // elapsed_ms may be 0 on fast hardware with tiny corpora — check blocks instead.
+    EXPECT_GT(resp.blocks_read, 0u);
 }
 
 TEST_F(ScannerTest, CancellationReturnsEmpty) {

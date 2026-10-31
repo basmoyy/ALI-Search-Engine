@@ -60,10 +60,13 @@ struct SegmentWriter::Impl {
         return next_doc_id >= cfg.max_docs
             || estimated_bytes >= cfg.max_segment_bytes;
     }
+
+    explicit Impl(std::filesystem::path d, SegmentWriterConfig c)
+        : tmp_dir(std::move(d)), cfg(std::move(c)) {}
 };
 
 SegmentWriter::SegmentWriter(std::filesystem::path tmp_dir, SegmentWriterConfig cfg)
-    : impl_(new Impl{std::move(tmp_dir), cfg}) {}
+    : impl_(new Impl(std::move(tmp_dir), cfg)) {}
 
 SegmentWriter::~SegmentWriter() = default;
 SegmentWriter::SegmentWriter(SegmentWriter&&) noexcept = default;

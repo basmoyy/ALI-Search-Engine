@@ -46,10 +46,12 @@ struct SegmentReader::Impl {
 
     std::filesystem::path postings_path() const { return dir / "postings.bin"; }
     std::filesystem::path blocks_path()   const { return dir / "blocks.bin";   }
+
+    explicit Impl(std::filesystem::path d) : dir(std::move(d)) {}
 };
 
 SegmentReader::SegmentReader(std::filesystem::path segment_dir)
-    : impl_(new Impl{std::move(segment_dir)}) {
+    : impl_(new Impl(std::move(segment_dir))) {
 
     // Validate header
     std::ifstream hf(impl_->dir / "segment_header.bin", std::ios::binary);

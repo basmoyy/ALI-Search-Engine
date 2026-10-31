@@ -64,6 +64,8 @@ struct Manifest::Impl {
     mutable std::mutex    mtx;
     ManifestSnapshot      current;
 
+    explicit Impl(std::filesystem::path r) : root(std::move(r)) {}
+
     std::filesystem::path manifest_path() const { return root / "manifest.bin"; }
     std::filesystem::path tmp_path()      const { return root / "manifest.bin.tmp"; }
 
@@ -123,6 +125,7 @@ struct Manifest::Impl {
             e.is_tombstone           = read_u8(in) != 0;
             e.segment_id             = read_str(in);
             e.path                   = read_str(in);
+            snap.segments.push_back(std::move(e));  // fix: was missing
         }
         return in.good() || in.eof();
     }
@@ -149,7 +152,7 @@ uint64_t ManifestSnapshot::total_size_bytes() const noexcept {
 // ── Manifest ─────────────────────────────────────────────────────────────────
 
 Manifest::Manifest(std::filesystem::path index_root)
-    : impl_(new Impl{std::move(index_root)}) {}
+    : impl_(new Impl(std::move(index_root))) {}
 Manifest::~Manifest() = default;
 
 bool Manifest::open() {

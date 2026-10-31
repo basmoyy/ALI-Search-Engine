@@ -266,7 +266,9 @@ AliStatus ali_crawler_enqueue_url(AliEngine* engine, const char* url) {
 
 AliStatus ali_stats_doc_count(AliEngine* engine, uint64_t* out_count) {
     if (!engine || !out_count) return ALI_ERR_INVALID_ARG;
-    *out_count = engine->writer->total_docs_indexed();
+    // Use the reader's view (reflects all published segments) rather than
+    // the session-scoped writer counter.
+    *out_count = static_cast<uint64_t>(engine->reader->total_doc_count());
     return ALI_OK;
 }
 

@@ -8,14 +8,16 @@ namespace ali {
 
 struct IndexReader::Impl {
     const Manifest&               manifest;
-    uint64_t                      loaded_version = UINT64_MAX;
+    uint64_t                      loaded_version   = UINT64_MAX;
     std::vector<SegmentReader>    segments;
     uint32_t                      total_doc_count_ = 0;
     float                         avg_dl_          = 0.0f;
+
+    explicit Impl(const Manifest& m) : manifest(m) {}
 };
 
 IndexReader::IndexReader(const Manifest& manifest)
-    : impl_(new Impl{manifest}) {}
+    : impl_(new Impl(manifest)) {}
 IndexReader::~IndexReader() = default;
 
 bool IndexReader::open() {
@@ -34,7 +36,8 @@ bool IndexReader::open() {
     impl_->total_doc_count_ = 0;
     for (const auto& s : impl_->segments) {
         impl_->total_doc_count_ += s.doc_count();
-        total_terms += static_cast<uint64_t>(s.avg_doc_length() * s.doc_count());
+        total_terms += static_cast<uint64_t>(
+            static_cast<float>(s.doc_count()) * s.avg_doc_length());
     }
     impl_->avg_dl_ = impl_->total_doc_count_ > 0
         ? static_cast<float>(total_terms) / static_cast<float>(impl_->total_doc_count_)
@@ -47,7 +50,7 @@ bool IndexReader::open() {
 void IndexReader::maybe_refresh() {
     const auto snap = impl_->manifest.snapshot();
     if (snap.manifest_version != impl_->loaded_version) {
-        open();
+        (void)open();
     }
 }
 

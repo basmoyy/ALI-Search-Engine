@@ -1,4 +1,4 @@
-// test_index_search_round_trip.cpp — Full integration: index via C API, search via C API.
+ // test_index_search_round_trip.cpp — Full integration: index via C API, search via C API.
 
 #include "ali.h"
 
