@@ -1,0 +1,36 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# CMake artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+_deps/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Compiled outputs
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Runtime index data (not source)
+storage/
+
+# Benchmark reports (generated)
+benchmarks/reports/*.md
+
+# Test temporaries
+*.tmp

@@ -1,0 +1,37 @@
+# ALI sample query suite
+# One query per line. Lines starting with # are comments.
+# Add representative queries for each category before running benchmarks.
+
+# Common terms
+search
+web
+page
+content
+data
+text
+information
+network
+device
+system
+
+# Multi-term
+web search engine
+local search offline
+quick brown fox
+mobile device storage
+index format version
+
+# Rare / specific
+inverted index segment
+block max wand pruning
+posting list delta encoding
+locality memory priority
+
+# Broad queries (stress WAND)
+the
+a
+is
+
+# No-result queries (not expected in corpus)
+xyzzy_nonexistent_term_ali
+qqqqqqqqqqqq

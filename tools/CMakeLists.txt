@@ -1,0 +1,3 @@
+add_subdirectory(index_inspect)
+add_subdirectory(corpus_import)
+add_subdirectory(benchmark)

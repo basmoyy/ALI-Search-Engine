@@ -1,0 +1,11 @@
+# ALI small test corpus — url TAB title TAB body_text
+https://example.com/fox	Quick Brown Fox	the quick brown fox jumps over the lazy dog
+https://example.com/engine	Search Engine	a search engine indexes documents and retrieves relevant results for queries
+https://example.com/mobile	Mobile Search	searching on mobile devices requires low memory usage and offline capability
+https://example.com/index	Inverted Index	an inverted index maps terms to the documents in which they appear
+https://example.com/bm25	BM25 Ranking	bm25 is a lexical ranking function based on term frequency and document frequency
+https://example.com/segment	Index Segments	segments are immutable portions of an index containing a subset of indexed documents
+https://example.com/wand	Block Max WAND	block max wand uses upper bounds to skip blocks that cannot contribute to top k results
+https://example.com/locality	Locality Memory	locality memory records which blocks have been useful for cache decisions
+https://example.com/crawler	Web Crawler	a web crawler discovers and fetches pages from the internet respecting robots txt rules
+https://example.com/compression	Compression	variable byte encoding compresses sorted integers efficiently for posting lists
