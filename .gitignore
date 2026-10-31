@@ -26,8 +26,8 @@ _deps/
 *.dll
 *.exe
 
-# Runtime index data (not source)
-storage/
+# Runtime index data (not source) — only the top-level storage/ directory
+/storage/
 
 # Benchmark reports (generated)
 benchmarks/reports/*.md

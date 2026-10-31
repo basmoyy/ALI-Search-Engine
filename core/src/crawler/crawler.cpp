@@ -29,7 +29,7 @@ void Crawler::enqueue_urls(const std::vector<std::string>& urls) {
     for (const auto& url : urls) {
         UrlRecord rec;
         rec.url = rec.canonical_url = url;
-        rec.status = CrawlStatus::Pending;
+        rec.status = CrawlStatus::Discovered;
         impl_->db.upsert_url(rec);
     }
 }

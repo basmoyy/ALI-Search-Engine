@@ -80,7 +80,29 @@ These are experimental targets. Measure actual RSS/PSS separately.
 
 ---
 
-## 5. Open decisions
+## 5. URL lifecycle states (v0.3)
+
+The crawler distinguishes knowing a URL exists from being permitted and able to retrieve it. A blocked or unindexed URL is never equivalent to a nonexistent URL.
+
+| State | Meaning | Terminal? |
+|---|---|---|
+| `Discovered` | Known; not yet scheduled | No |
+| `Queued` | Eligible; waiting for fetch attempt | No |
+| `Fetching` | Actively being retrieved (short-lived) | No |
+| `Fetched` | Response received; processing may still fail | No |
+| `Indexed` | Published into the searchable index | No |
+| `Restricted` | Robots/policy/access controls blocked retrieval | **Yes** |
+| `AuthRequired` | Content requires authentication | **Yes** |
+| `RateLimited` | Host requested reduced frequency; in backoff | No |
+| `TemporarilyUnavailable` | Transient network/server/DNS failure | No |
+| `Stale` | Previously indexed; may need refresh | No |
+| `Removed` | Deleted, withdrawn, or removed from ALI | **Yes** |
+
+Terminal states are never returned by `pop_crawl_queue`. Do not retry `Restricted`, `AuthRequired`, or `Removed` URLs aggressively.
+
+---
+
+## 6. Open decisions
 
 See `docs/decisions/` for individual decision records.
 

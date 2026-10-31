@@ -18,6 +18,7 @@ add_executable(ali_unit_tests
   unit/test_manifest.cpp
   unit/test_query_planner.cpp
   unit/test_scanner.cpp
+  unit/test_crawl_status.cpp
 )
 
 target_link_libraries(ali_unit_tests

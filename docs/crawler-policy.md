@@ -1,6 +1,20 @@
 # ALI Crawler Policy
 
-## Politeness requirements (mandatory)
+## Access-aware discovery (v0.3)
+
+The crawler must not equate a blocked URL with a nonexistent one. Classify every failed or denied fetch into the correct lifecycle state so persistent scheduling state survives restarts.
+
+- `Restricted` — set when robots.txt, policy rules, or access controls block retrieval. Do not retry without a policy change.
+- `AuthRequired` — set when a login wall, paywall, or session requirement is detected. Do not bypass.
+- `RateLimited` — set when a 429 or equivalent backoff is received. Schedule retry after the indicated or default delay.
+- `TemporarilyUnavailable` — set on transient network, DNS, or server failures. Apply exponential backoff.
+- `Removed` — set when content is explicitly deleted or withdrawn from ALI.
+
+Do not bypass CAPTCHA, Cloudflare challenges, login controls, paywalls, or other technical access controls.
+
+---
+
+
 
 - Respect `robots.txt` for every host. Fetch and cache rules before crawling.
 - Enforce per-host minimum request delay (default: 1000 ms).
