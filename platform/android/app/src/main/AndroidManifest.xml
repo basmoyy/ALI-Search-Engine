@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AndroidManifest.xml — ALI Android application manifest.
+
+  Permissions declared here are the minimum required for the test harness:
+    INTERNET         — crawler fetches public web pages
+    FOREGROUND_SERVICE + FOREGROUND_SERVICE_DATA_SYNC
+                     — foreground service for crawl sessions
+    RECEIVE_BOOT_COMPLETED
+                     — reschedule WorkManager jobs after reboot
+    POST_NOTIFICATIONS (API 33+)
+                     — crawl progress notification
+
+  Permissions NOT requested (by design):
+    READ/WRITE_EXTERNAL_STORAGE — index lives in app-private files directory
+    ACCESS_FINE_LOCATION        — no location data used
+    CAMERA / CONTACTS           — not required
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Network access for the crawler -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Background crawl via foreground service (Android 9+) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- Reschedule WorkManager after device reboot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Crawl progress notification (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Battery optimisation opt-out prompt (user must grant explicitly) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application
+        android:name=".AliApplication"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.ALI"
+        android:supportsRtl="true"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:hardwareAccelerated="true">
+
+        <!-- Main activity — single-activity Compose navigation -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Foreground service for active crawl sessions -->
+        <service
+            android:name=".AliCrawlService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- WorkManager job for opportunistic background crawling -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup" />
+        </provider>
+
+    </application>
+
+</manifest>

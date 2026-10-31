@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ALI</string>
+    <string name="search_hint">Search local index…</string>
+    <string name="no_results">No results</string>
+    <string name="crawler_idle">Idle</string>
+    <string name="crawler_running">Crawling</string>
+</resources>

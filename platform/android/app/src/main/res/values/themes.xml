@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base theme — edge-to-edge, no action bar (Compose handles the top bar). -->
+    <style name="Theme.ALI" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

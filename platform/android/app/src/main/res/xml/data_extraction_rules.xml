@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  data_extraction_rules.xml — Controls what Android backs up via Auto Backup.
+  We explicitly exclude the search index and SQLite database from cloud backup:
+    - The index is large (up to 359 MB at 1M docs) — not suitable for cloud backup.
+    - Search history and crawl state are sensitive — kept local by design.
+  Users can export/delete their data through the app settings.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="ali/"/>
+        <exclude domain="database" path="ali/"/>
+    </cloud-backup>
+    <device-transfer>
+        <!-- Allow device-to-device transfer of the index (opt-in, large) -->
+        <exclude domain="file" path="ali/index/"/>
+        <include domain="file" path="ali/meta.db"/>
+    </device-transfer>
+</data-extraction-rules>

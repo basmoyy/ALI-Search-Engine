@@ -36,9 +36,17 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-// OpenSSL
-#include <openssl/err.h>
-#include <openssl/ssl.h>
+// OpenSSL — guarded so the file compiles on platforms where OpenSSL is
+// unavailable (e.g. Android initial harness). When ALI_DISABLE_OPENSSL is
+// defined, HTTPS fetch returns FetchResultCode::NetworkError and the
+// platform shell is responsible for network access.
+#ifndef ALI_DISABLE_OPENSSL
+#  include <openssl/err.h>
+#  include <openssl/ssl.h>
+#  define ALI_HAS_OPENSSL 1
+#else
+#  define ALI_HAS_OPENSSL 0
+#endif
 
 namespace ali {
 
@@ -314,6 +322,8 @@ static FetchResult fetch_http(const ParsedUrl& parsed,
 
 // ── HTTPS fetch (OpenSSL) ─────────────────────────────────────────────────────
 
+#if ALI_HAS_OPENSSL
+
 static SSL_CTX* get_ssl_ctx() {
     // Initialise once; the context is intentionally leaked (process lifetime).
     static SSL_CTX* ctx = []() -> SSL_CTX* {
@@ -427,7 +437,20 @@ static FetchResult fetch_https(const ParsedUrl& parsed,
     return result;
 }
 
-// ── Public Fetcher interface ──────────────────────────────────────────────────
+#else // ALI_HAS_OPENSSL
+
+static FetchResult fetch_https(const ParsedUrl& parsed, const FetchConfig& cfg) {
+    // HTTPS fetch is not available when ALI_DISABLE_OPENSSL is defined.
+    // On Android, the platform shell handles HTTPS via HttpsURLConnection.
+    FetchResult result;
+    result.final_url    = "https://" + parsed.host + parsed.path;
+    result.code         = FetchResultCode::NetworkError;
+    result.error_detail = "HTTPS requires OpenSSL (not compiled in this build)";
+    (void)cfg;
+    return result;
+}
+
+#endif // ALI_HAS_OPENSSL
 
 Fetcher::Fetcher(FetchConfig cfg) : cfg_(std::move(cfg)) {}
 Fetcher::~Fetcher() = default;

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- backup_rules.xml — Legacy Auto Backup rules (API < 31). -->
+<full-backup-content>
+    <exclude domain="file"     path="ali/"/>
+    <exclude domain="database" path="ali/"/>
+</full-backup-content>
