@@ -42,6 +42,7 @@ gtest_discover_tests(ali_unit_tests)
 add_executable(ali_integration_tests
   integration/test_index_search_round_trip.cpp
   integration/test_multi_segment.cpp
+  integration/test_wand_equivalence.cpp
 )
 
 target_link_libraries(ali_integration_tests

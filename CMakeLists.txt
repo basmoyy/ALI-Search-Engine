@@ -43,6 +43,21 @@ endif()
 # ── Dependencies ─────────────────────────────────────────────────────────────
 find_package(SQLite3 REQUIRED)
 
+# OpenSSL — required for HTTPS fetching in the crawler.
+# Hint towards Homebrew on macOS (arm64 and x86_64).
+if(APPLE)
+  # Try arm64 Homebrew first, then x86_64.
+  find_path(OPENSSL_ROOT_DIR openssl/ssl.h
+    PATHS /opt/homebrew/opt/openssl/include
+          /usr/local/opt/openssl/include
+    NO_DEFAULT_PATH)
+  if(OPENSSL_ROOT_DIR)
+    get_filename_component(OPENSSL_ROOT_DIR "${OPENSSL_ROOT_DIR}" DIRECTORY)
+    set(OPENSSL_ROOT_DIR "${OPENSSL_ROOT_DIR}" CACHE PATH "" FORCE)
+  endif()
+endif()
+find_package(OpenSSL REQUIRED)
+
 # ── Core library ─────────────────────────────────────────────────────────────
 add_subdirectory(core)
 

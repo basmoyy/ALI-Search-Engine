@@ -1,4 +1,7 @@
 // url_frontier.cpp — Persistent URL frontier backed by MetadataDb.
+//
+// All frontier state lives in SQLite so crawl progress survives process death.
+// Priority scoring and host-level bucketing can be layered here in future phases.
 
 #include "ali/crawler/url_frontier.h"
 
@@ -31,10 +34,12 @@ void UrlFrontier::enqueue_discovered(const std::vector<std::string>& urls) {
 std::vector<UrlRecord> UrlFrontier::pop(uint32_t limit, int64_t now_unix) {
     auto records = db_.pop_crawl_queue(limit, now_unix);
     // Mark popped records as Queued so they aren't double-scheduled.
+    // Ignore return value — failure here is non-fatal; worst case the URL
+    // is popped again on the next cycle and the fetch is idempotent.
     for (const auto& rec : records) {
         if (rec.status == CrawlStatus::Discovered
          || rec.status == CrawlStatus::Stale) {
-            db_.update_status(rec.url, CrawlStatus::Queued);
+            (void)db_.update_status(rec.url, CrawlStatus::Queued);
         }
     }
     return records;
@@ -43,9 +48,9 @@ std::vector<UrlRecord> UrlFrontier::pop(uint32_t limit, int64_t now_unix) {
 void UrlFrontier::mark_fetched(const std::string& url, int64_t now_unix) {
     auto rec = db_.find_url(url);
     if (!rec) return;
-    rec->status        = CrawlStatus::Fetched;
+    rec->status          = CrawlStatus::Fetched;
     rec->last_fetched_at = now_unix;
-    db_.upsert_url(*rec);
+    (void)db_.upsert_url(*rec);
 }
 
 void UrlFrontier::mark_indexed(const std::string& url,
@@ -56,14 +61,14 @@ void UrlFrontier::mark_indexed(const std::string& url,
     rec->status       = CrawlStatus::Indexed;
     rec->doc_id       = doc_id;
     rec->content_hash = content_hash;
-    db_.upsert_url(*rec);
+    (void)db_.upsert_url(*rec);
 }
 
 void UrlFrontier::mark_access_failure(const std::string& url,
                                        CrawlStatus         status,
                                        const std::string&  note,
                                        int64_t             /*now_unix*/) {
-    db_.update_status(url, status, note);
+    (void)db_.update_status(url, status, note);
 }
 
 void UrlFrontier::mark_transient_failure(const std::string& url,
@@ -79,11 +84,11 @@ void UrlFrontier::mark_transient_failure(const std::string& url,
     const int64_t delay = static_cast<int64_t>(cfg_.transient_delay_s)
                         * (1LL << std::min(rec->fetch_failures, 6u));
     rec->next_fetch_at = now_unix + std::min(delay, static_cast<int64_t>(3600));
-    db_.upsert_url(*rec);
+    (void)db_.upsert_url(*rec);
 }
 
 void UrlFrontier::mark_stale(const std::string& url) {
-    db_.update_status(url, CrawlStatus::Stale);
+    (void)db_.update_status(url, CrawlStatus::Stale);
 }
 
 uint32_t UrlFrontier::pending_count() const {

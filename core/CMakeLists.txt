@@ -54,5 +54,7 @@ target_include_directories(ali_core
 
 target_link_libraries(ali_core
   PUBLIC  SQLite::SQLite3
+          OpenSSL::SSL
+          OpenSSL::Crypto
   PRIVATE ali_compile_options
 )

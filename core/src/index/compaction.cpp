@@ -146,7 +146,7 @@ CompactionResult Compaction::run(std::atomic<bool>& cancel_flag) {
                 continue;
             }
 
-            writer.add_document(url, title, excerpt, {});
+            (void)writer.add_document(url, title, excerpt, {});
         }
         return true;
     };
