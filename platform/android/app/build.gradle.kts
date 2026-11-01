@@ -23,6 +23,7 @@ plugins {
 android {
     namespace   = "com.ali.search"
     compileSdk  = 35
+    ndkVersion  = "30.0.16248370"  // match installed NDK exactly
 
     defaultConfig {
         applicationId  = "com.ali.search"
@@ -58,7 +59,7 @@ android {
     externalNativeBuild {
         cmake {
             path    = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+            version = "4.1.2"  // match installed CMake exactly
         }
     }
 

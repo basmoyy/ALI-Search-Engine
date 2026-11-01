@@ -97,7 +97,7 @@ fun SearchScreen(
         // ── Results list ──────────────────────────────────────────────────────
         if (state.results.isEmpty() && state.query.isNotEmpty() && !state.isLoading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No results for "${state.query}"",
+                Text("No results for \"${state.query}\"",
                      style = MaterialTheme.typography.bodyMedium,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

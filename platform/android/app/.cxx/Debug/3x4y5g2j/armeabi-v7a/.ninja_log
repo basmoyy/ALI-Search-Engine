@@ -1,0 +1,37 @@
+# ninja log v6
+5	103	1793521746844460787	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/crawler/resource_controller.cpp.o	8e468562130eb8f4
+2	700	1793521746841033637	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/compression/vbyte.cpp.o	ff8f1971c0766c65
+103	731	1793521746942293116	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/index/document.cpp.o	e195ebf013b882b1
+2	788	1793521746840905262	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/compression/delta.cpp.o	28aa4d369bcf5cca
+5	1021	1793521746844179494	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/crawler/html_parser.cpp.o	4dc0bcb8fd937275
+7	1059	1793521746845990090	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/crawler/segment_builder.cpp.o	e017037d0489b09
+5	1080	1793521746844034451	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/crawler/fetcher.cpp.o	c5e0d3584c13b779
+7	1116	1793521746845859547	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/crawler/scheduler.cpp.o	93c4283747eaaa79
+9	1184	1793521746847862520	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/crawler/url_frontier.cpp.o	b15b502a50d50a5e
+3	1233	1793521746842459064	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/crawler/deduplicator.cpp.o	f3b805c0243d6d45
+788	1411	1793521747627475338	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/index/posting_list.cpp.o	bc2785706281388
+11	1454	1793521746850060244	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/index/compaction.cpp.o	1a2e360ecb99702f
+1080	1556	1793521747919323937	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/query/query_parser.cpp.o	f6d8121e649ae853
+2	1568	1793521746841145513	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/crawler/crawler.cpp.o	9acafad2c5994e04
+1021	1584	1793521747860692640	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/index/term_dictionary.cpp.o	a277c54b73e36e8
+1233	1656	1793521748072360164	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/ranking/bm25.cpp.o	82a3dc70be298449
+703	1749	1793521747541946597	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/index/index_reader.cpp.o	253ed06da3e7f494
+731	1901	1793521747570340010	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/index/index_writer.cpp.o	8d8d79df911b26f3
+1411	1934	1793521748250680405	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/ranking/result_set.cpp.o	222f1d92b1393f99
+1568	2044	1793521748407704785	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/storage/content_store.cpp.o	2146672c44e8da8f
+1184	2060	1793521748023566104	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/query/tokeniser.cpp.o	48c1ff421441860d
+1060	2071	1793521747898977708	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/locality/locality_memory.cpp.o	2a8440f4dee3e143
+1116	2088	1793521747955076403	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/query/query_planner.cpp.o	a7de5f6ce570f057
+1556	2263	1793521748395722698	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/scanner/block_cache.cpp.o	96bd756c3fadca4d
+2045	2342	1793521748883881586	CMakeFiles/ali_jni.dir/Users/akash/Desktop/Software_Project/ALI/platform/android/app/src/main/jni/AliJni.cpp.o	4c3a16ea4c3e2456
+1584	2347	1793521748423382189	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/storage/manifest.cpp.o	b9fac587a8bc4ea7
+1454	2347	1793521748293401962	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/scanner/ali_scanner.cpp.o	3a591f64e180fa6a
+1657	2365	1793521748495870461	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/storage/metadata_db.cpp.o	eac8645191674bb8
+1749	2402	1793521748588021207	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/storage/segment_reader.cpp.o	c68323546e3069be
+1934	2532	1793521748773588542	CMakeFiles/ali_capi.dir/Users/akash/Desktop/Software_Project/ALI/interfaces/c_api/ali_engine.cpp.o	44670e830a9a7a57
+1901	2558	1793521748740085176	CMakeFiles/ali_core.dir/Users/akash/Desktop/Software_Project/ALI/core/src/storage/segment_writer.cpp.o	f3475709eea0face
+1	2834	1793521746840645301	CMakeFiles/sqlite3_bundled.dir/sqlite/sqlite3.c.o	3d4bb42a5dbc637b
+2834	2861	1793521749673185181	libsqlite3_bundled.a	92f73b5df54085e9
+2861	2889	1793521749700192209	libali_core.a	d24be833bea3b0ae
+2889	2914	1793521749728518371	libali_capi.a	b56f67af2f9a4a40
+2914	2957	1793521749752807087	/Users/akash/Desktop/Software Project/ALI/platform/android/app/build/intermediates/cxx/Debug/3x4y5g2j/obj/armeabi-v7a/libali_core.so	e916a4e2792a7f51

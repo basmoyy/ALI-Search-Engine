@@ -8,9 +8,9 @@ package com.ali.search
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -30,9 +30,9 @@ data class NavDestination(
 )
 
 private val destinations = listOf(
-    NavDestination("search",    "Search")    { Icon(Icons.Default.Search,     "Search") },
-    NavDestination("index",     "Index")     { Icon(Icons.Default.Storage,    "Index") },
-    NavDestination("benchmark", "Benchmark") { Icon(Icons.Default.Assessment, "Benchmark") },
+    NavDestination("search",    "Search")    { Icon(Icons.Default.Search,   "Search") },
+    NavDestination("index",     "Index")     { Icon(Icons.Default.List,     "Index") },
+    NavDestination("benchmark", "Benchmark") { Icon(Icons.Default.Settings, "Benchmark") },
 )
 
 @OptIn(ExperimentalMaterial3Api::class)

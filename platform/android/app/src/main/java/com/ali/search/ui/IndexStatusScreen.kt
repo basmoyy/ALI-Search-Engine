@@ -17,7 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -89,7 +89,7 @@ fun IndexStatusScreen(
                 enabled  = state.crawlerActive,
                 modifier = Modifier.weight(1f),
             ) {
-                Icon(Icons.Default.Stop, contentDescription = null)
+                Icon(Icons.Default.Close, contentDescription = null)
                 Spacer(Modifier.width(4.dp))
                 Text("Stop")
             }

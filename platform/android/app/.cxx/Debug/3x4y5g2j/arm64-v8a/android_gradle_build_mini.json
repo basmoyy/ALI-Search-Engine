@@ -1,0 +1,45 @@
+{
+  "buildFiles": [
+    "/Users/akash/Desktop/Software Project/ALI/platform/android/app/src/main/cpp/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/Users/akash/Library/Android/sdk/cmake/4.1.2/bin/ninja",
+      "-C",
+      "/Users/akash/Desktop/Software Project/ALI/platform/android/app/.cxx/Debug/3x4y5g2j/arm64-v8a",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/Users/akash/Library/Android/sdk/cmake/4.1.2/bin/ninja",
+    "-C",
+    "/Users/akash/Desktop/Software Project/ALI/platform/android/app/.cxx/Debug/3x4y5g2j/arm64-v8a",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "sqlite3_bundled::@6890427a1f51a3e7e1df": {
+      "artifactName": "sqlite3_bundled",
+      "abi": "arm64-v8a",
+      "output": "/Users/akash/Desktop/Software Project/ALI/platform/android/app/.cxx/Debug/3x4y5g2j/arm64-v8a/libsqlite3_bundled.a",
+      "runtimeFiles": []
+    },
+    "ali_core::@6890427a1f51a3e7e1df": {
+      "artifactName": "ali_core",
+      "abi": "arm64-v8a",
+      "output": "/Users/akash/Desktop/Software Project/ALI/platform/android/app/.cxx/Debug/3x4y5g2j/arm64-v8a/libali_core.a",
+      "runtimeFiles": []
+    },
+    "ali_jni::@6890427a1f51a3e7e1df": {
+      "artifactName": "ali_jni",
+      "abi": "arm64-v8a",
+      "output": "/Users/akash/Desktop/Software Project/ALI/platform/android/app/build/intermediates/cxx/Debug/3x4y5g2j/obj/arm64-v8a/libali_core.so",
+      "runtimeFiles": []
+    },
+    "ali_capi::@6890427a1f51a3e7e1df": {
+      "artifactName": "ali_capi",
+      "abi": "arm64-v8a",
+      "output": "/Users/akash/Desktop/Software Project/ALI/platform/android/app/.cxx/Debug/3x4y5g2j/arm64-v8a/libali_capi.a",
+      "runtimeFiles": []
+    }
+  }
+}

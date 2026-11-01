@@ -177,7 +177,8 @@ struct Crawler::Impl {
                 std::chrono::steady_clock::now().time_since_epoch()).count();
             auto it = last_fetch_ms_.find(host);
             if (it != last_fetch_ms_.end()) {
-                wait_ms = std::max(int64_t{0}, delay_ms - (now - it->second));
+                const int64_t elapsed = static_cast<int64_t>(now) - it->second;
+                wait_ms = std::max(int64_t{0}, delay_ms - elapsed);
             }
         }
         if (wait_ms > 0) {
@@ -185,9 +186,9 @@ struct Crawler::Impl {
         }
         {
             std::lock_guard lock(host_delay_mtx_);
-            last_fetch_ms_[host] =
+            last_fetch_ms_[host] = static_cast<int64_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
         }
     }
 

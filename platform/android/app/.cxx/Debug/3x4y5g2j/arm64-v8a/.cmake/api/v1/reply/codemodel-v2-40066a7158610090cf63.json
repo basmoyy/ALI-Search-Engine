@@ -1,0 +1,87 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"jsonFile" : "directory-.-Debug-f5ebdc15457944623624.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10.0"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "ali_android_bridge",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "ali_capi::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ali_capi-Debug-34e763b0771aa7a827cf.json",
+					"name" : "ali_capi",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "ali_core::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ali_core-Debug-a3f993778de2a84fb8a1.json",
+					"name" : "ali_core",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "ali_jni::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ali_jni-Debug-cc12633e3b2bf8860e66.json",
+					"name" : "ali_jni",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "sqlite3_bundled::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-sqlite3_bundled-Debug-b65fc2650fe9cb74158e.json",
+					"name" : "sqlite3_bundled",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/Users/akash/Desktop/Software Project/ALI/platform/android/app/.cxx/Debug/3x4y5g2j/arm64-v8a",
+		"source" : "/Users/akash/Desktop/Software Project/ALI/platform/android/app/src/main/cpp"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 8
+	}
+}

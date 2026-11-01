@@ -19,48 +19,38 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(ali_compile_options INTERFACE)
 target_compile_options(ali_compile_options INTERFACE
     -Wall -Wextra -Wno-unused-parameter
+    # Suppress warnings from third-party SQLite amalgamation
+    -Wno-shorten-64-to-32
+)
+target_compile_definitions(ali_compile_options INTERFACE
+    # Disable OpenSSL — Android handles HTTPS via platform shell
+    ALI_DISABLE_OPENSSL=1
+    # Suppress SQLite thread-safety warnings
+    SQLITE_THREADSAFE=1
 )
 
-# ── SQLite (bundled with Android NDK) ────────────────────────────────────────
-# Android API 26+ includes libsqlite.so in the NDK sysroot.
-# We link against the system library rather than bundling our own copy.
-find_library(SQLITE_LIB sqlite3)
-if(NOT SQLITE_LIB)
-    # Fallback: compile SQLite amalgamation from Android SDK sources.
-    message(STATUS "System sqlite3 not found, using NDK bundled version")
-    set(SQLITE_LIB "sqlite3")
-endif()
+# ── SQLite amalgamation (bundled — NDK does not include sqlite3.h) ────────────
+# Using the official SQLite amalgamation (single .c + .h pair).
+# This is the standard approach for Android NDK builds.
+set(SQLITE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/sqlite")
 
-# Provide a CMake target that the core can link against.
-add_library(SQLite3::SQLite3 INTERFACE IMPORTED)
-set_target_properties(SQLite3::SQLite3 PROPERTIES
-    INTERFACE_LINK_LIBRARIES "${SQLITE_LIB}"
+add_library(sqlite3_bundled STATIC
+    "${SQLITE_DIR}/sqlite3.c"
+)
+target_include_directories(sqlite3_bundled PUBLIC "${SQLITE_DIR}")
+# SQLite compiles as C, not C++ — tell the compiler explicitly
+set_source_files_properties("${SQLITE_DIR}/sqlite3.c"
+    PROPERTIES LANGUAGE C
 )
 
-# ── OpenSSL (bundled via prefab or static build) ──────────────────────────────
-# For the Android harness, we disable the TLS fetcher and use
-# Android's built-in HttpsURLConnection via a JNI callback instead.
-# This avoids the OpenSSL cross-compilation complexity for the initial harness.
-# The fetcher gracefully returns FetchResultCode::NetworkError for HTTPS
-# when OpenSSL is unavailable — the Android shell handles networking.
-#
-# When OpenSSL prefab support is confirmed, set:
-#   find_package(openssl REQUIRED CONFIG)
-# For now, provide a no-op stub target.
+# Provide the CMake target the core expects
+add_library(SQLite3::SQLite3 ALIAS sqlite3_bundled)
+
+# ── OpenSSL stubs (HTTPS handled by Android platform shell) ──────────────────
 add_library(OpenSSL::SSL    INTERFACE IMPORTED)
 add_library(OpenSSL::Crypto INTERFACE IMPORTED)
 
-# Disable the TLS code path for this Android build.
-target_compile_definitions(ali_compile_options INTERFACE
-    ALI_DISABLE_OPENSSL=1
-)
-
 # ── Core library ──────────────────────────────────────────────────────────────
-# Include all core source files directly. We do not use add_subdirectory
-# because the root CMakeLists.txt has desktop-specific settings that
-# conflict with the Android toolchain. Instead we enumerate sources here,
-# keeping the core itself completely unchanged.
-
 file(GLOB_RECURSE CORE_SOURCES
     "${REPO_ROOT}/core/src/storage/*.cpp"
     "${REPO_ROOT}/core/src/compression/*.cpp"
@@ -76,10 +66,11 @@ add_library(ali_core STATIC ${CORE_SOURCES})
 
 target_include_directories(ali_core PUBLIC
     "${REPO_ROOT}/core/include"
+    "${SQLITE_DIR}"
 )
 
 target_link_libraries(ali_core PUBLIC
-    SQLite3::SQLite3
+    sqlite3_bundled
     OpenSSL::SSL
     OpenSSL::Crypto
     android
@@ -89,21 +80,18 @@ target_link_libraries(ali_core PUBLIC
 target_link_libraries(ali_core PRIVATE ali_compile_options)
 
 # ── C API ─────────────────────────────────────────────────────────────────────
-
 add_library(ali_capi STATIC
     "${REPO_ROOT}/interfaces/c_api/ali_engine.cpp"
 )
 
 target_include_directories(ali_capi PUBLIC
     "${REPO_ROOT}/interfaces/c_api"
+    "${SQLITE_DIR}"
 )
 
 target_link_libraries(ali_capi PUBLIC ali_core)
 
-# ── JNI shared library (loaded by System.loadLibrary("ali_core")) ─────────────
-# The JNI bridge is the only Android-specific native code.
-# Everything else (core, c_api) is cross-platform.
-
+# ── JNI shared library ────────────────────────────────────────────────────────
 add_library(ali_jni SHARED
     "${REPO_ROOT}/platform/android/app/src/main/jni/AliJni.cpp"
 )
@@ -119,5 +107,4 @@ target_link_libraries(ali_jni PRIVATE
     log
 )
 
-# The library must be named "ali_core" to match System.loadLibrary("ali_core").
 set_target_properties(ali_jni PROPERTIES OUTPUT_NAME "ali_core")
