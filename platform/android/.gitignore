@@ -1,0 +1,10 @@
+# Android build outputs and local config — never commit these
+.gradle/
+.kotlin/
+build/
+app/build/
+app/.cxx/
+local.properties
+*.apk
+*.aab
+*.keystore
