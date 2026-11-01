@@ -68,8 +68,8 @@ fun IndexStatusScreen(
         StatRow("Documents",  "%,d".format(state.docCount))
         StatRow("Segments",   state.segmentCount.toString())
         StatRow("Index size", formatBytes(state.indexBytes))
-        if (state.pagesIndexedThisSession > 0) {
-            StatRow("This session", "${state.pagesIndexedThisSession} pages indexed")
+        if (state.pagesIndexedSession > 0) {
+            StatRow("This session", "${state.pagesIndexedSession} pages indexed")
         }
 
         HorizontalDivider()

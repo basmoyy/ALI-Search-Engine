@@ -2,13 +2,11 @@ package com.ali.search
 
 // AliViewModel.kt — ViewModel bridging the ALI engine to the Compose UI.
 //
-// All engine calls that block (search, index, benchmark) run on
-// Dispatchers.IO so the main thread is never blocked.
-// The ViewModel survives configuration changes (rotation, dark mode toggle).
-//
-// State is exposed as StateFlow so Compose can observe it efficiently.
-// No business logic lives in the UI layer — this ViewModel is the
-// single source of truth for all screen state.
+// Threading rules (strictly enforced):
+//   - _index / _search / _benchmark are only mutated on the MAIN dispatcher.
+//   - Blocking work (engine calls, network) runs on Dispatchers.IO.
+//   - The crawler loop runs on the MAIN dispatcher with IO calls suspended
+//     via withContext(IO) — this ensures state mutations are always safe.
 
 import android.app.Application
 import android.content.Context
@@ -25,98 +23,73 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// ── UI state models ───────────────────────────────────────────────────────────
+// ── State models ──────────────────────────────────────────────────────────────
 
 data class SearchState(
-    val query:    String             = "",
-    val results:  List<AliEngine.Result> = emptyList(),
-    val isLoading: Boolean           = false,
-    val elapsedMs: Long              = 0,
-    val blocksRead: Int              = 0,
-    val error:    String?            = null,
+    val query:     String                = "",
+    val results:   List<AliEngine.Result> = emptyList(),
+    val isLoading: Boolean               = false,
+    val elapsedMs: Long                  = 0,
+    val error:     String?               = null,
 )
 
 data class IndexState(
-    val docCount:      Long   = 0L,
-    val segmentCount:  Int    = 0,
-    val indexBytes:    Long   = 0L,
-    val crawlerActive: Boolean = false,
-    val seedUrls:      List<String> = emptyList(),
-    val isImporting:   Boolean = false,
-    val importError:   String? = null,
-    // ── Crawl state ───────────────────────────────────────────────────────────
-    val isFetching:         Boolean = false,
-    val crawlStatus:        String  = "",
-    val crawlLog:           List<String> = emptyList(),
-    val pendingQueueSize:   Int     = 0,
-    val pagesIndexedThisSession: Int = 0,
+    val docCount:     Long          = 0L,
+    val segmentCount: Int           = 0,
+    val indexBytes:   Long          = 0L,
+    // Single-URL fetch
+    val isFetching:   Boolean       = false,
+    // Crawler
+    val crawlerActive:        Boolean       = false,
+    val crawlLog:             List<String>  = emptyList(),
+    val pendingQueueSize:     Int           = 0,
+    val pagesIndexedSession:  Int           = 0,
+    // TSV import (debug helper)
+    val isImporting:  Boolean       = false,
+    val importResult: String?       = null,
 )
 
 data class BenchmarkState(
-    val isRunning:    Boolean          = false,
-    val results:      List<BenchmarkRun> = emptyList(),
-    val currentRssKb: Long            = 0L,
-    val error:        String?         = null,
+    val isRunning: Boolean            = false,
+    val results:   List<BenchmarkRun> = emptyList(),
+    val error:     String?            = null,
 )
 
 data class BenchmarkRun(
-    val label:         String,
-    val docCount:      Long,
-    val p50Ms:         Long,
-    val p95Ms:         Long,
-    val p99Ms:         Long,
-    val rssDeltaKb:    Long,
-    val avgBlocksRead: Int,
-    val avgCandidates: Int,
+    val label:      String,
+    val docCount:   Long,
+    val p50Ms:      Long,
+    val p95Ms:      Long,
+    val p99Ms:      Long,
+    val rssDeltaKb: Long,
 )
 
-// ── ViewModel ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
 class AliViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val engine: AliEngine?
-        get() = AliApplication.engine
+    private val ctx: Context get() = getApplication<Application>().applicationContext
+    private val engine: AliEngine? get() = AliApplication.engine
 
-    // ── Search state ─────────────────────────────────────────────────────────
+    // ── State ─────────────────────────────────────────────────────────────────
 
-    private val _search = MutableStateFlow(SearchState())
-    val search: StateFlow<SearchState> = _search.asStateFlow()
+    private val _search    = MutableStateFlow(SearchState())
+    private val _index     = MutableStateFlow(IndexState())
+    private val _benchmark = MutableStateFlow(BenchmarkState())
 
-    fun onQueryChange(query: String) {
-        _search.value = _search.value.copy(query = query)
-        if (query.isBlank()) {
-            _search.value = _search.value.copy(results = emptyList(), error = null)
-            return
-        }
-        // Trigger search on every keystroke (debounce handled by Compose LaunchedEffect).
-        executeSearch(query)
+    val search:    StateFlow<SearchState>    = _search.asStateFlow()
+    val index:     StateFlow<IndexState>     = _index.asStateFlow()
+    val benchmark: StateFlow<BenchmarkState> = _benchmark.asStateFlow()
+
+    // ── Log helper (MUST be called on main thread) ────────────────────────────
+
+    private fun log(msg: String) {
+        // Called on main — safe to mutate StateFlow.
+        val newLog = (_index.value.crawlLog + msg).takeLast(60)
+        _index.value = _index.value.copy(crawlLog = newLog)
     }
 
-    fun executeSearch(query: String = _search.value.query) {
-        if (query.isBlank()) return
-        val eng = engine ?: run {
-            _search.value = _search.value.copy(error = "Engine not ready")
-            return
-        }
-        viewModelScope.launch {
-            _search.value = _search.value.copy(isLoading = true, error = null)
-            val t0 = System.currentTimeMillis()
-            val results = withContext(Dispatchers.IO) {
-                eng.search(query, topK = 10, timeoutMs = 2000)
-            }
-            val elapsed = System.currentTimeMillis() - t0
-            _search.value = _search.value.copy(
-                results   = results,
-                isLoading = false,
-                elapsedMs = elapsed,
-            )
-        }
-    }
-
-    // ── Index state ───────────────────────────────────────────────────────────
-
-    private val _index = MutableStateFlow(IndexState())
-    val index: StateFlow<IndexState> = _index.asStateFlow()
+    // ── Index stats ───────────────────────────────────────────────────────────
 
     fun refreshIndexState() {
         val eng = engine ?: return
@@ -132,77 +105,74 @@ class AliViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun stopCrawler() {
-        val eng = engine ?: return
-        crawlJob?.cancel()
-        crawlJob = null
+    // ── Search ────────────────────────────────────────────────────────────────
+
+    fun onQueryChange(q: String) {
+        _search.value = _search.value.copy(query = q)
+        if (q.isBlank()) { _search.value = _search.value.copy(results = emptyList()); return }
+        executeSearch(q)
+    }
+
+    fun executeSearch(query: String = _search.value.query) {
+        if (query.isBlank()) return
+        val eng = engine ?: run { _search.value = _search.value.copy(error = "Engine not ready"); return }
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { eng.crawlerStop() }
-            _index.value = _index.value.copy(
-                crawlerActive = false,
-                crawlStatus   = "Stopped",
+            _search.value = _search.value.copy(isLoading = true, error = null)
+            val t0 = System.currentTimeMillis()
+            val results = withContext(Dispatchers.IO) { eng.search(query, topK = 10, timeoutMs = 2000) }
+            _search.value = _search.value.copy(
+                results   = results,
+                isLoading = false,
+                elapsedMs = System.currentTimeMillis() - t0,
             )
         }
     }
 
-    // ── Phase 1 + 2: Fetch a single URL and index it ──────────────────────────
-
-    private val context: Context get() = getApplication<Application>().applicationContext
-    private val robotsCache = mutableMapOf<String, Pair<Long, Set<String>>>() // host → (expiry, disallowed)
-    private var crawlJob: Job? = null
-
-    private fun addLog(msg: String) {
-        val log = (_index.value.crawlLog + msg).takeLast(50) // keep last 50 entries
-        _index.value = _index.value.copy(crawlLog = log, crawlStatus = msg)
-    }
+    // ── Phase 2: Fetch and index a single URL ─────────────────────────────────
 
     fun fetchAndIndex(url: String) {
         val eng = engine ?: return
+        // Runs on main; suspends into IO for blocking calls.
         viewModelScope.launch {
-            _index.value = _index.value.copy(isFetching = true, crawlStatus = "Fetching $url…")
-            addLog("→ Fetching: $url")
+            _index.value = _index.value.copy(isFetching = true)
+            log("→ Fetching: $url")
 
-            val result = withContext(Dispatchers.IO) {
-                AliAndroidFetcher.fetch(url, context)
-            }
+            val result = withContext(Dispatchers.IO) { AliAndroidFetcher.fetch(url, ctx) }
 
             when (result.code) {
                 FetchCode.OK -> {
-                    addLog("✓ Fetched ${result.body.size / 1024} KB (${result.httpStatus})")
+                    log("✓ ${result.body.size / 1024} KB received (HTTP ${result.httpStatus})")
                     val parsed = withContext(Dispatchers.IO) {
                         AliAndroidParser.parse(result.body, result.finalUrl.ifEmpty { url })
                     }
-                    if (parsed.parseError != null) {
-                        addLog("⚠ Parse warning: ${parsed.parseError}")
-                    }
-                    val title   = parsed.title.ifBlank { url }
-                    val body    = parsed.bodyText
-                    if (body.isBlank()) {
-                        addLog("✗ No indexable text found")
+                    if (parsed.bodyText.isBlank()) {
+                        log("✗ No indexable text extracted")
                     } else {
-                        val ok = withContext(Dispatchers.IO) {
-                            eng.indexDocument(parsed.url, title, body).also { eng.flush() }
+                        val title = parsed.title.ifBlank { url }
+                        val ok    = withContext(Dispatchers.IO) {
+                            eng.indexDocument(parsed.url, title, parsed.bodyText)
+                                .also { if (it) eng.flush() }
                         }
                         if (ok) {
-                            addLog("✓ Indexed: \"$title\"")
+                            log("✓ Indexed: \"${title.take(70)}\"")
                             _index.value = _index.value.copy(
-                                pagesIndexedThisSession = _index.value.pagesIndexedThisSession + 1
+                                pagesIndexedSession = _index.value.pagesIndexedSession + 1
                             )
+                            refreshIndexState()
                         } else {
-                            addLog("✗ Index rejected document")
+                            log("✗ Engine rejected document")
                         }
                     }
-                    refreshIndexState()
                 }
-                FetchCode.NO_NETWORK          -> addLog("✗ No network connection")
-                FetchCode.BLOCKED_ADDRESS     -> addLog("✗ Blocked address (private network)")
-                FetchCode.RATE_LIMITED        -> addLog("✗ Rate limited (429) — try later")
-                FetchCode.RESTRICTED          -> addLog("✗ Access denied (403)")
-                FetchCode.AUTH_REQUIRED       -> addLog("✗ Authentication required")
-                FetchCode.UNSUPPORTED_CONTENT -> addLog("✗ Non-text content: ${result.contentType}")
-                FetchCode.TIMEOUT             -> addLog("✗ Timeout fetching $url")
-                FetchCode.HTTP_ERROR          -> addLog("✗ HTTP ${result.httpStatus}")
-                else                          -> addLog("✗ Error: ${result.errorDetail}")
+                FetchCode.NO_NETWORK          -> log("✗ No network")
+                FetchCode.BLOCKED_ADDRESS     -> log("✗ Blocked address (private network)")
+                FetchCode.RATE_LIMITED        -> log("✗ Rate limited (HTTP 429)")
+                FetchCode.RESTRICTED          -> log("✗ Access denied (HTTP 403)")
+                FetchCode.AUTH_REQUIRED       -> log("✗ Authentication required")
+                FetchCode.UNSUPPORTED_CONTENT -> log("✗ Non-text content: ${result.contentType}")
+                FetchCode.TIMEOUT             -> log("✗ Timeout")
+                FetchCode.HTTP_ERROR          -> log("✗ HTTP ${result.httpStatus}")
+                else                          -> log("✗ Error: ${result.errorDetail}")
             }
 
             _index.value = _index.value.copy(isFetching = false)
@@ -210,37 +180,51 @@ class AliViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // ── Phase 4: Autonomous discovery crawler ─────────────────────────────────
+    // Runs entirely on the MAIN dispatcher — only IO calls are suspended to IO.
+    // This guarantees all _index mutations are on the correct thread.
 
-    // Per-host politeness: minimum gap between requests to the same host.
-    private val lastFetchTime = mutableMapOf<String, Long>()
+    private var crawlJob: Job? = null
+
+    // Session state — reset each time startCrawler is called.
+    private val visitedUrls  = mutableSetOf<String>()
+    private val pendingQueue = ArrayDeque<String>()
+    private val hostLastFetch = mutableMapOf<String, Long>()
+    private val robotsCache  = mutableMapOf<String, Pair<Long, Set<String>>>()
     private val HOST_DELAY_MS = 2_000L
-    private val visitedUrls   = mutableSetOf<String>()
-    private val pendingQueue  = ArrayDeque<String>()
 
     fun startCrawler(seedUrls: List<String>) {
         if (_index.value.crawlerActive) return
         val eng = engine ?: return
 
-        seedUrls.forEach { url ->
-            if (url.isNotBlank() && visitedUrls.add(url)) {
-                pendingQueue.addLast(url)
-            }
+        // Reset session state.
+        visitedUrls.clear()
+        pendingQueue.clear()
+        hostLastFetch.clear()
+
+        seedUrls.filter { it.startsWith("http") }.forEach { url ->
+            if (visitedUrls.add(url)) pendingQueue.addLast(url)
         }
 
+        if (pendingQueue.isEmpty()) { log("✗ No valid seed URLs"); return }
+
+        // Derive allowed domain from the first seed URL (stay on that site).
+        val seedHost = try { java.net.URL(seedUrls.first()).host } catch (e: Exception) { "" }
+
         _index.value = _index.value.copy(
-            crawlerActive = true,
-            seedUrls      = seedUrls,
-            crawlStatus   = "Starting…",
+            crawlerActive       = true,
+            pagesIndexedSession = 0,
+            pendingQueueSize    = pendingQueue.size,
         )
+        log("Crawler started — seed domain: $seedHost")
 
-        crawlJob = viewModelScope.launch(Dispatchers.IO) {
-            addLog("Crawler started with ${pendingQueue.size} seed URL(s)")
-            eng.crawlerStart()
-
-            while (isActive && _index.value.crawlerActive && pendingQueue.isNotEmpty()) {
-                // Resource check — pause if no network
-                if (!AliAndroidFetcher.isNetworkAvailable(context)) {
-                    withContext(Dispatchers.Main) { addLog("⏸ No network — waiting…") }
+        crawlJob = viewModelScope.launch {  // default = Main
+            while (isActive && pendingQueue.isNotEmpty()) {
+                // Check network — pause on main, no state mutation needed.
+                val hasNetwork = withContext(Dispatchers.IO) {
+                    AliAndroidFetcher.isNetworkAvailable(ctx)
+                }
+                if (!hasNetwork) {
+                    log("⏸ No network — waiting 10 s")
                     delay(10_000)
                     continue
                 }
@@ -248,240 +232,192 @@ class AliViewModel(application: Application) : AndroidViewModel(application) {
                 val url  = pendingQueue.removeFirst()
                 val host = try { java.net.URL(url).host } catch (e: Exception) { continue }
 
-                // Per-host politeness delay
-                val now     = System.currentTimeMillis()
-                val lastReq = lastFetchTime[host] ?: 0L
-                val wait    = HOST_DELAY_MS - (now - lastReq)
-                if (wait > 0) delay(wait)
-                lastFetchTime[host] = System.currentTimeMillis()
+                // Politeness delay.
+                val waited = System.currentTimeMillis() - (hostLastFetch[host] ?: 0L)
+                if (waited < HOST_DELAY_MS) delay(HOST_DELAY_MS - waited)
+                hostLastFetch[host] = System.currentTimeMillis()
 
-                // Robots.txt check
-                if (!isAllowedByRobots(url, host)) {
-                    withContext(Dispatchers.Main) { addLog("✗ robots.txt disallows: $url") }
+                // Robots.txt check (IO).
+                val allowed = withContext(Dispatchers.IO) { checkRobots(url, host) }
+                if (!allowed) { log("✗ robots.txt: $url"); continue }
+
+                log("→ $url")
+
+                val result = withContext(Dispatchers.IO) { AliAndroidFetcher.fetch(url, ctx) }
+
+                if (result.code == FetchCode.RATE_LIMITED) {
+                    log("⏸ Rate limited — waiting 30 s")
+                    // Put URL back for retry.
+                    pendingQueue.addFirst(url)
+                    delay(30_000)
                     continue
                 }
 
-                withContext(Dispatchers.Main) { addLog("→ Crawling: $url") }
-
-                val result = AliAndroidFetcher.fetch(url, context)
                 if (result.code != FetchCode.OK) {
-                    withContext(Dispatchers.Main) { addLog("✗ ${result.code}: $url") }
-                    if (result.code == FetchCode.RATE_LIMITED) delay(30_000)
+                    log("✗ ${result.code.name.lowercase()}: $url")
                     continue
                 }
 
-                val parsed = AliAndroidParser.parse(
-                    result.body,
-                    result.finalUrl.ifEmpty { url }
-                )
+                val parsed = withContext(Dispatchers.IO) {
+                    AliAndroidParser.parse(result.body, result.finalUrl.ifEmpty { url })
+                }
 
                 if (parsed.bodyText.isNotBlank()) {
-                    val ok = eng.indexDocument(parsed.url, parsed.title, parsed.bodyText)
+                    val title = parsed.title.ifBlank { url }
+                    val ok    = withContext(Dispatchers.IO) {
+                        eng.indexDocument(parsed.url, title, parsed.bodyText)
+                            .also { if (it) eng.flush() }
+                    }
                     if (ok) {
-                        eng.flush()
-                        withContext(Dispatchers.Main) {
-                            addLog("✓ Indexed: \"${parsed.title.take(60)}\"")
-                            _index.value = _index.value.copy(
-                                pagesIndexedThisSession = _index.value.pagesIndexedThisSession + 1
-                            )
-                            refreshIndexState()
-                        }
+                        log("✓ \"${title.take(60)}\"")
+                        _index.value = _index.value.copy(
+                            pagesIndexedSession = _index.value.pagesIndexedSession + 1
+                        )
+                        refreshIndexState()
                     }
                 }
 
-                // Enqueue discovered links
+                // Enqueue links that stay on the seed host (avoids crawling the whole web).
+                var newLinks = 0
                 for (link in parsed.links) {
-                    if (pendingQueue.size < 500 && visitedUrls.add(link)) {
-                        pendingQueue.addLast(link)
-                    }
+                    val linkHost = try { java.net.URL(link).host } catch (e: Exception) { continue }
+                    if (linkHost != seedHost) continue               // stay on seed domain
+                    if (pendingQueue.size >= 200) break              // bounded queue
+                    if (visitedUrls.add(link)) { pendingQueue.addLast(link); newLinks++ }
                 }
 
-                withContext(Dispatchers.Main) {
-                    _index.value = _index.value.copy(pendingQueueSize = pendingQueue.size)
-                }
+                _index.value = _index.value.copy(pendingQueueSize = pendingQueue.size)
+                if (newLinks > 0) log("  queued $newLinks new links (${pendingQueue.size} pending)")
             }
 
-            eng.crawlerStop()
-            withContext(Dispatchers.Main) {
-                _index.value = _index.value.copy(
-                    crawlerActive   = false,
-                    crawlStatus     = "Idle — ${_index.value.pagesIndexedThisSession} pages indexed",
-                    pendingQueueSize = 0,
-                )
-                addLog("Crawler stopped")
-                refreshIndexState()
-            }
+            // Done.
+            withContext(Dispatchers.IO) { eng.crawlerStop() }
+            _index.value = _index.value.copy(
+                crawlerActive    = false,
+                pendingQueueSize = 0,
+            )
+            log("Crawler finished — ${_index.value.pagesIndexedSession} pages indexed this session")
+            refreshIndexState()
         }
     }
 
-    // ── Robots.txt ────────────────────────────────────────────────────────────
+    fun stopCrawler() {
+        crawlJob?.cancel()
+        crawlJob = null
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { engine?.crawlerStop() }
+            _index.value = _index.value.copy(crawlerActive = false, pendingQueueSize = 0)
+            log("Crawler stopped by user")
+        }
+    }
 
-    private suspend fun isAllowedByRobots(url: String, host: String): Boolean {
-        val now = System.currentTimeMillis()
+    // ── Robots helpers (called from IO) ───────────────────────────────────────
+
+    private fun checkRobots(url: String, host: String): Boolean {
+        val now    = System.currentTimeMillis()
         val cached = robotsCache[host]
         val disallowed: Set<String>
 
         if (cached != null && now < cached.first) {
             disallowed = cached.second
         } else {
-            // Fetch robots.txt — give it a short timeout, treat failure as allow-all.
-            val scheme      = if (url.startsWith("https")) "https" else "http"
-            val robotsUrl   = "$scheme://$host/robots.txt"
-            val result      = try {
-                AliAndroidFetcher.fetch(robotsUrl)
-            } catch (e: Exception) {
-                null
-            }
-            disallowed = if (result?.isSuccess == true) {
-                parseRobotsTxt(String(result.body, Charsets.UTF_8))
-            } else emptySet()
-            // Cache for 1 hour.
+            val scheme    = if (url.startsWith("https")) "https" else "http"
+            val r         = try { AliAndroidFetcher.fetch("$scheme://$host/robots.txt") } catch (e: Exception) { null }
+            disallowed    = if (r?.isSuccess == true) parseRobots(String(r.body, Charsets.UTF_8)) else emptySet()
             robotsCache[host] = Pair(now + 3_600_000L, disallowed)
         }
 
-        val path = try { java.net.URL(url).path } catch (e: Exception) { "/" }
-        return disallowed.none { path.startsWith(it) }
+        return try {
+            val path = java.net.URL(url).path
+            disallowed.none { path.startsWith(it) }
+        } catch (e: Exception) { true }
     }
 
-    private fun parseRobotsTxt(text: String): Set<String> {
-        val disallowed = mutableSetOf<String>()
-        var inOurAgent = false
-        for (rawLine in text.lines()) {
-            val line = rawLine.trim()
+    private fun parseRobots(text: String): Set<String> {
+        val out = mutableSetOf<String>()
+        var ours = false
+        for (line in text.lines()) {
+            val l = line.trim()
             when {
-                line.startsWith("User-agent:", ignoreCase = true) -> {
-                    val agent = line.substringAfter(":").trim()
-                    inOurAgent = agent == "*" || agent.lowercase().startsWith("alibot")
+                l.startsWith("User-agent:", ignoreCase = true) -> {
+                    val a = l.substringAfter(":").trim()
+                    ours = a == "*" || a.lowercase().startsWith("alibot")
                 }
-                inOurAgent && line.startsWith("Disallow:", ignoreCase = true) -> {
-                    val path = line.substringAfter(":").trim()
-                    if (path.isNotEmpty()) disallowed.add(path)
+                ours && l.startsWith("Disallow:", ignoreCase = true) -> {
+                    val p = l.substringAfter(":").trim()
+                    if (p.isNotEmpty()) out.add(p)
                 }
             }
         }
-        return disallowed
+        return out
     }
-    /// Reads from the app's private files/import/ directory.
-    /// Push files there with: adb shell run-as com.ali.search sh -c 'cat > files/import/corpus.tsv'
+
+    // ── TSV import (debug helper) ─────────────────────────────────────────────
+
     fun importFromTsv(filename: String = "corpus.tsv") {
-        val eng = engine ?: run {
-            _index.value = _index.value.copy(importError = "Engine not ready")
-            return
-        }
-        val app = getApplication<android.app.Application>()
-        val filePath = java.io.File(app.filesDir, "import/$filename").absolutePath
+        val eng = engine ?: run { _index.value = _index.value.copy(importResult = "Engine not ready"); return }
+        val path = java.io.File(ctx.filesDir, "import/$filename").absolutePath
         viewModelScope.launch {
-            _index.value = _index.value.copy(isImporting = true, importError = null)
-            val result = withContext(Dispatchers.IO) {
-                var indexed = 0
-                var skipped = 0
+            _index.value = _index.value.copy(isImporting = true, importResult = null)
+            val msg = withContext(Dispatchers.IO) {
+                var ok = 0; var skip = 0
                 try {
-                    java.io.BufferedReader(java.io.FileReader(filePath)).use { reader ->
-                        reader.lineSequence()
-                            .filter { it.isNotBlank() && !it.startsWith("#") }
-                            .forEach { line ->
-                                val parts = line.split("\t", limit = 3)
-                                if (parts.size >= 3) {
-                                    if (eng.indexDocument(parts[0], parts[1], parts[2])) {
-                                        indexed++
-                                    } else {
-                                        skipped++
-                                    }
-                                } else {
-                                    skipped++
-                                }
-                            }
+                    java.io.BufferedReader(java.io.FileReader(path)).use { r ->
+                        r.lineSequence().filter { it.isNotBlank() && !it.startsWith("#") }.forEach { line ->
+                            val p = line.split("\t", limit = 3)
+                            if (p.size >= 3 && eng.indexDocument(p[0], p[1], p[2])) ok++ else skip++
+                        }
                     }
                     eng.flush()
-                    "Indexed $indexed docs, skipped $skipped"
-                } catch (e: Exception) {
-                    "Error: ${e.message}"
-                }
+                    "Indexed $ok, skipped $skip"
+                } catch (e: Exception) { "Error: ${e.message}" }
             }
-            _index.value = _index.value.copy(isImporting = false, importError = result)
+            _index.value = _index.value.copy(isImporting = false, importResult = msg)
             refreshIndexState()
         }
     }
 
-    // ── Benchmark state ───────────────────────────────────────────────────────
-
-    private val _benchmark = MutableStateFlow(BenchmarkState())
-    val benchmark: StateFlow<BenchmarkState> = _benchmark.asStateFlow()
+    // ── Benchmark ─────────────────────────────────────────────────────────────
 
     private val benchQueries = listOf(
-        "search engine", "mobile device", "index posting",
-        "block wand", "locality memory", "crawler robots",
-        "bm25 ranking", "android kotlin", "segment manifest",
-        "battery network",
+        "search engine", "mobile device", "index posting", "block wand",
+        "locality memory", "crawler robots", "bm25 ranking", "android kotlin",
+        "segment manifest", "battery network",
     )
 
     fun runBenchmark() {
-        val eng = engine ?: run {
-            _benchmark.value = _benchmark.value.copy(error = "Engine not ready")
-            return
-        }
+        val eng = engine ?: run { _benchmark.value = _benchmark.value.copy(error = "Engine not ready"); return }
         viewModelScope.launch {
             _benchmark.value = _benchmark.value.copy(isRunning = true, error = null)
-
-            val rssBefore = currentRssKb()
-            val latencies = mutableListOf<Long>()
-            var totalBlocks = 0L
-            var totalCandidates = 0L
-
+            val rssBefore = pssKb()
+            val lats = mutableListOf<Long>()
             withContext(Dispatchers.IO) {
-                // 5 warm iterations across all queries.
                 repeat(5) {
-                    for (q in benchQueries) {
+                    benchQueries.forEach { q ->
                         val t0 = System.currentTimeMillis()
-                        val results = eng.search(q, topK = 10, timeoutMs = 2000)
-                        latencies.add(System.currentTimeMillis() - t0)
-                        results.size // access to avoid dead-code elimination
+                        eng.search(q, topK = 10, timeoutMs = 2000).size
+                        lats.add(System.currentTimeMillis() - t0)
                     }
                 }
             }
-
-            val rssAfter  = currentRssKb()
-            val sorted    = latencies.sorted()
-            val n         = sorted.size
-            val p50       = sorted[(n * 0.50).toInt().coerceAtMost(n - 1)]
-            val p95       = sorted[(n * 0.95).toInt().coerceAtMost(n - 1)]
-            val p99       = sorted[(n * 0.99).toInt().coerceAtMost(n - 1)]
-
-            val run = BenchmarkRun(
-                label         = "device_warm",
-                docCount      = eng.docCount(),
-                p50Ms         = p50,
-                p95Ms         = p95,
-                p99Ms         = p99,
-                rssDeltaKb    = rssAfter - rssBefore,
-                avgBlocksRead = 0,  // populated by native metrics in future
-                avgCandidates = 0,
-            )
+            val sorted = lats.sorted(); val n = sorted.size
             _benchmark.value = _benchmark.value.copy(
-                isRunning     = false,
-                results       = _benchmark.value.results + run,
-                currentRssKb  = rssAfter,
+                isRunning = false,
+                results   = _benchmark.value.results + BenchmarkRun(
+                    label      = "device_warm",
+                    docCount   = eng.docCount(),
+                    p50Ms      = sorted[(n * 0.50).toInt().coerceAtMost(n - 1)],
+                    p95Ms      = sorted[(n * 0.95).toInt().coerceAtMost(n - 1)],
+                    p99Ms      = sorted[(n * 0.99).toInt().coerceAtMost(n - 1)],
+                    rssDeltaKb = pssKb() - rssBefore,
+                ),
             )
         }
     }
 
-    // ── Memory measurement ───────────────────────────────────────────────────
+    private fun pssKb(): Long = try {
+        Debug.MemoryInfo().also { Debug.getMemoryInfo(it) }.totalPss.toLong()
+    } catch (e: Exception) { 0L }
 
-    private fun currentRssKb(): Long {
-        return try {
-            val info = Debug.MemoryInfo()
-            Debug.getMemoryInfo(info)
-            // getTotalPss() is the best proxy for actual memory use on Android.
-            info.totalPss.toLong()
-        } catch (e: Exception) {
-            0L
-        }
-    }
-
-    // ── Lifecycle ─────────────────────────────────────────────────────────────
-
-    override fun onCleared() {
-        super.onCleared()
-        // Do NOT close the engine here — AliApplication owns its lifetime.
-    }
+    override fun onCleared() { super.onCleared(); crawlJob?.cancel() }
 }
