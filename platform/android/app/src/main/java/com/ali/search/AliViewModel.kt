@@ -352,7 +352,28 @@ class AliViewModel(application: Application) : AndroidViewModel(application) {
         return out
     }
 
-    // ── TSV import (debug helper) ─────────────────────────────────────────────
+    // ── Clear index ───────────────────────────────────────────────────────────
+
+    fun clearIndex() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                // Stop any active crawl first.
+                engine?.crawlerStop()
+                // Delete the index directory and recreate it fresh.
+                val indexDir = java.io.File(ctx.filesDir, "ali/index")
+                val dbFile   = java.io.File(ctx.filesDir, "ali/meta.db")
+                indexDir.deleteRecursively()
+                dbFile.delete()
+                indexDir.mkdirs()
+            }
+            // Reopen the engine against the clean directory.
+            AliApplication.engine?.close()
+            val paths  = com.ali.search.AliStoragePaths.get(ctx)
+            AliApplication.reopenEngine(paths.indexRoot, paths.dbPath)
+            _index.value = IndexState()
+            log("Index cleared")
+        }
+    }
 
     fun importFromTsv(filename: String = "corpus.tsv") {
         val eng = engine ?: run { _index.value = _index.value.copy(importResult = "Engine not ready"); return }

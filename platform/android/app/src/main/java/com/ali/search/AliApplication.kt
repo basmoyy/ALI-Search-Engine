@@ -18,10 +18,13 @@ import android.content.ComponentCallbacks2
 class AliApplication : Application() {
 
     companion object {
-        // Engine singleton. Null only before Application.onCreate() completes.
         @Volatile
         var engine: AliEngine? = null
             private set
+
+        fun reopenEngine(indexRoot: String, dbPath: String) {
+            engine = AliEngine.open(indexRoot, dbPath)
+        }
     }
 
     override fun onCreate() {

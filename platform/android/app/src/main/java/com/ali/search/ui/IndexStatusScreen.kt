@@ -199,6 +199,38 @@ fun IndexStatusScreen(
             }
         }
 
+        HorizontalDivider()
+
+        // ── Danger zone ───────────────────────────────────────────────────────
+        var showClearDialog by remember { mutableStateOf(false) }
+
+        OutlinedButton(
+            onClick  = { showClearDialog = true },
+            modifier = Modifier.fillMaxWidth(),
+            colors   = ButtonDefaults.outlinedButtonColors(
+                contentColor = MaterialTheme.colorScheme.error,
+            ),
+        ) {
+            Text("Clear entire index")
+        }
+
+        if (showClearDialog) {
+            AlertDialog(
+                onDismissRequest = { showClearDialog = false },
+                title   = { Text("Clear index?") },
+                text    = { Text("This permanently deletes all indexed content. The crawler history and search index will be reset. This cannot be undone.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        vm.clearIndex()
+                        showClearDialog = false
+                    }) { Text("Clear", color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showClearDialog = false }) { Text("Cancel") }
+                },
+            )
+        }
+
         Spacer(Modifier.height(16.dp))
     }
 }
