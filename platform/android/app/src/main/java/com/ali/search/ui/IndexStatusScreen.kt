@@ -16,8 +16,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -55,7 +55,39 @@ fun IndexStatusScreen(
 
         HorizontalDivider()
 
-        // ── Crawler control ───────────────────────────────────────────────────
+        // ── Import from file ──────────────────────────────────────────────────
+        Text("Import corpus", style = MaterialTheme.typography.titleMedium)
+
+        Text(
+            "Push corpus via ADB then tap Import:\nadb shell run-as com.ali.search sh -c 'cat > files/import/corpus.tsv' < corpus.tsv",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Button(
+            onClick  = { vm.importFromTsv() },
+            enabled  = !state.isImporting,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (state.isImporting) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("Importing…")
+            } else {
+                Text("Import files/import/corpus.tsv")
+            }
+        }
+
+        state.importError?.let {
+            Text(it,
+                 style = MaterialTheme.typography.bodySmall,
+                 color = if (it.startsWith("Error"))
+                             MaterialTheme.colorScheme.error
+                         else
+                             MaterialTheme.colorScheme.primary)
+        }
+
+        HorizontalDivider()
         Text("Crawler", style = MaterialTheme.typography.titleMedium)
 
         StatusChip(active = state.crawlerActive)

@@ -39,6 +39,8 @@ data class IndexState(
     val indexBytes:    Long   = 0L,
     val crawlerActive: Boolean = false,
     val seedUrls:      List<String> = emptyList(),
+    val isImporting:   Boolean = false,
+    val importError:   String? = null,
 )
 
 data class BenchmarkState(
@@ -140,6 +142,49 @@ class AliViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { eng.crawlerStop() }
             _index.value = _index.value.copy(crawlerActive = false)
+        }
+    }
+
+    /// Import documents from a TSV file (url TAB title TAB body).
+    /// Reads from the app's private files/import/ directory.
+    /// Push files there with: adb shell run-as com.ali.search sh -c 'cat > files/import/corpus.tsv'
+    fun importFromTsv(filename: String = "corpus.tsv") {
+        val eng = engine ?: run {
+            _index.value = _index.value.copy(importError = "Engine not ready")
+            return
+        }
+        val app = getApplication<android.app.Application>()
+        val filePath = java.io.File(app.filesDir, "import/$filename").absolutePath
+        viewModelScope.launch {
+            _index.value = _index.value.copy(isImporting = true, importError = null)
+            val result = withContext(Dispatchers.IO) {
+                var indexed = 0
+                var skipped = 0
+                try {
+                    java.io.BufferedReader(java.io.FileReader(filePath)).use { reader ->
+                        reader.lineSequence()
+                            .filter { it.isNotBlank() && !it.startsWith("#") }
+                            .forEach { line ->
+                                val parts = line.split("\t", limit = 3)
+                                if (parts.size >= 3) {
+                                    if (eng.indexDocument(parts[0], parts[1], parts[2])) {
+                                        indexed++
+                                    } else {
+                                        skipped++
+                                    }
+                                } else {
+                                    skipped++
+                                }
+                            }
+                    }
+                    eng.flush()
+                    "Indexed $indexed docs, skipped $skipped"
+                } catch (e: Exception) {
+                    "Error: ${e.message}"
+                }
+            }
+            _index.value = _index.value.copy(isImporting = false, importError = result)
+            refreshIndexState()
         }
     }
 
