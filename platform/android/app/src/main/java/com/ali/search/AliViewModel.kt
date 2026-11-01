@@ -10,15 +10,18 @@ package com.ali.search
 // No business logic lives in the UI layer — this ViewModel is the
 // single source of truth for all screen state.
 
-import android.app.ActivityManager
 import android.app.Application
+import android.content.Context
 import android.os.Debug
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -41,6 +44,12 @@ data class IndexState(
     val seedUrls:      List<String> = emptyList(),
     val isImporting:   Boolean = false,
     val importError:   String? = null,
+    // ── Crawl state ───────────────────────────────────────────────────────────
+    val isFetching:         Boolean = false,
+    val crawlStatus:        String  = "",
+    val crawlLog:           List<String> = emptyList(),
+    val pendingQueueSize:   Int     = 0,
+    val pagesIndexedThisSession: Int = 0,
 )
 
 data class BenchmarkState(
@@ -123,29 +132,235 @@ class AliViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun startCrawler(seedUrls: List<String>) {
+    fun stopCrawler() {
         val eng = engine ?: return
+        crawlJob?.cancel()
+        crawlJob = null
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                seedUrls.forEach { eng.crawlerEnqueue(it) }
-                eng.crawlerStart()
-            }
+            withContext(Dispatchers.IO) { eng.crawlerStop() }
             _index.value = _index.value.copy(
-                crawlerActive = true,
-                seedUrls = seedUrls,
+                crawlerActive = false,
+                crawlStatus   = "Stopped",
             )
         }
     }
 
-    fun stopCrawler() {
+    // ── Phase 1 + 2: Fetch a single URL and index it ──────────────────────────
+
+    private val context: Context get() = getApplication<Application>().applicationContext
+    private val robotsCache = mutableMapOf<String, Pair<Long, Set<String>>>() // host → (expiry, disallowed)
+    private var crawlJob: Job? = null
+
+    private fun addLog(msg: String) {
+        val log = (_index.value.crawlLog + msg).takeLast(50) // keep last 50 entries
+        _index.value = _index.value.copy(crawlLog = log, crawlStatus = msg)
+    }
+
+    fun fetchAndIndex(url: String) {
         val eng = engine ?: return
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { eng.crawlerStop() }
-            _index.value = _index.value.copy(crawlerActive = false)
+            _index.value = _index.value.copy(isFetching = true, crawlStatus = "Fetching $url…")
+            addLog("→ Fetching: $url")
+
+            val result = withContext(Dispatchers.IO) {
+                AliAndroidFetcher.fetch(url, context)
+            }
+
+            when (result.code) {
+                FetchCode.OK -> {
+                    addLog("✓ Fetched ${result.body.size / 1024} KB (${result.httpStatus})")
+                    val parsed = withContext(Dispatchers.IO) {
+                        AliAndroidParser.parse(result.body, result.finalUrl.ifEmpty { url })
+                    }
+                    if (parsed.parseError != null) {
+                        addLog("⚠ Parse warning: ${parsed.parseError}")
+                    }
+                    val title   = parsed.title.ifBlank { url }
+                    val body    = parsed.bodyText
+                    if (body.isBlank()) {
+                        addLog("✗ No indexable text found")
+                    } else {
+                        val ok = withContext(Dispatchers.IO) {
+                            eng.indexDocument(parsed.url, title, body).also { eng.flush() }
+                        }
+                        if (ok) {
+                            addLog("✓ Indexed: \"$title\"")
+                            _index.value = _index.value.copy(
+                                pagesIndexedThisSession = _index.value.pagesIndexedThisSession + 1
+                            )
+                        } else {
+                            addLog("✗ Index rejected document")
+                        }
+                    }
+                    refreshIndexState()
+                }
+                FetchCode.NO_NETWORK          -> addLog("✗ No network connection")
+                FetchCode.BLOCKED_ADDRESS     -> addLog("✗ Blocked address (private network)")
+                FetchCode.RATE_LIMITED        -> addLog("✗ Rate limited (429) — try later")
+                FetchCode.RESTRICTED          -> addLog("✗ Access denied (403)")
+                FetchCode.AUTH_REQUIRED       -> addLog("✗ Authentication required")
+                FetchCode.UNSUPPORTED_CONTENT -> addLog("✗ Non-text content: ${result.contentType}")
+                FetchCode.TIMEOUT             -> addLog("✗ Timeout fetching $url")
+                FetchCode.HTTP_ERROR          -> addLog("✗ HTTP ${result.httpStatus}")
+                else                          -> addLog("✗ Error: ${result.errorDetail}")
+            }
+
+            _index.value = _index.value.copy(isFetching = false)
         }
     }
 
-    /// Import documents from a TSV file (url TAB title TAB body).
+    // ── Phase 4: Autonomous discovery crawler ─────────────────────────────────
+
+    // Per-host politeness: minimum gap between requests to the same host.
+    private val lastFetchTime = mutableMapOf<String, Long>()
+    private val HOST_DELAY_MS = 2_000L
+    private val visitedUrls   = mutableSetOf<String>()
+    private val pendingQueue  = ArrayDeque<String>()
+
+    fun startCrawler(seedUrls: List<String>) {
+        if (_index.value.crawlerActive) return
+        val eng = engine ?: return
+
+        seedUrls.forEach { url ->
+            if (url.isNotBlank() && visitedUrls.add(url)) {
+                pendingQueue.addLast(url)
+            }
+        }
+
+        _index.value = _index.value.copy(
+            crawlerActive = true,
+            seedUrls      = seedUrls,
+            crawlStatus   = "Starting…",
+        )
+
+        crawlJob = viewModelScope.launch(Dispatchers.IO) {
+            addLog("Crawler started with ${pendingQueue.size} seed URL(s)")
+            eng.crawlerStart()
+
+            while (isActive && _index.value.crawlerActive && pendingQueue.isNotEmpty()) {
+                // Resource check — pause if no network
+                if (!AliAndroidFetcher.isNetworkAvailable(context)) {
+                    withContext(Dispatchers.Main) { addLog("⏸ No network — waiting…") }
+                    delay(10_000)
+                    continue
+                }
+
+                val url  = pendingQueue.removeFirst()
+                val host = try { java.net.URL(url).host } catch (e: Exception) { continue }
+
+                // Per-host politeness delay
+                val now     = System.currentTimeMillis()
+                val lastReq = lastFetchTime[host] ?: 0L
+                val wait    = HOST_DELAY_MS - (now - lastReq)
+                if (wait > 0) delay(wait)
+                lastFetchTime[host] = System.currentTimeMillis()
+
+                // Robots.txt check
+                if (!isAllowedByRobots(url, host)) {
+                    withContext(Dispatchers.Main) { addLog("✗ robots.txt disallows: $url") }
+                    continue
+                }
+
+                withContext(Dispatchers.Main) { addLog("→ Crawling: $url") }
+
+                val result = AliAndroidFetcher.fetch(url, context)
+                if (result.code != FetchCode.OK) {
+                    withContext(Dispatchers.Main) { addLog("✗ ${result.code}: $url") }
+                    if (result.code == FetchCode.RATE_LIMITED) delay(30_000)
+                    continue
+                }
+
+                val parsed = AliAndroidParser.parse(
+                    result.body,
+                    result.finalUrl.ifEmpty { url }
+                )
+
+                if (parsed.bodyText.isNotBlank()) {
+                    val ok = eng.indexDocument(parsed.url, parsed.title, parsed.bodyText)
+                    if (ok) {
+                        eng.flush()
+                        withContext(Dispatchers.Main) {
+                            addLog("✓ Indexed: \"${parsed.title.take(60)}\"")
+                            _index.value = _index.value.copy(
+                                pagesIndexedThisSession = _index.value.pagesIndexedThisSession + 1
+                            )
+                            refreshIndexState()
+                        }
+                    }
+                }
+
+                // Enqueue discovered links
+                for (link in parsed.links) {
+                    if (pendingQueue.size < 500 && visitedUrls.add(link)) {
+                        pendingQueue.addLast(link)
+                    }
+                }
+
+                withContext(Dispatchers.Main) {
+                    _index.value = _index.value.copy(pendingQueueSize = pendingQueue.size)
+                }
+            }
+
+            eng.crawlerStop()
+            withContext(Dispatchers.Main) {
+                _index.value = _index.value.copy(
+                    crawlerActive   = false,
+                    crawlStatus     = "Idle — ${_index.value.pagesIndexedThisSession} pages indexed",
+                    pendingQueueSize = 0,
+                )
+                addLog("Crawler stopped")
+                refreshIndexState()
+            }
+        }
+    }
+
+    // ── Robots.txt ────────────────────────────────────────────────────────────
+
+    private suspend fun isAllowedByRobots(url: String, host: String): Boolean {
+        val now = System.currentTimeMillis()
+        val cached = robotsCache[host]
+        val disallowed: Set<String>
+
+        if (cached != null && now < cached.first) {
+            disallowed = cached.second
+        } else {
+            // Fetch robots.txt — give it a short timeout, treat failure as allow-all.
+            val scheme      = if (url.startsWith("https")) "https" else "http"
+            val robotsUrl   = "$scheme://$host/robots.txt"
+            val result      = try {
+                AliAndroidFetcher.fetch(robotsUrl)
+            } catch (e: Exception) {
+                null
+            }
+            disallowed = if (result?.isSuccess == true) {
+                parseRobotsTxt(String(result.body, Charsets.UTF_8))
+            } else emptySet()
+            // Cache for 1 hour.
+            robotsCache[host] = Pair(now + 3_600_000L, disallowed)
+        }
+
+        val path = try { java.net.URL(url).path } catch (e: Exception) { "/" }
+        return disallowed.none { path.startsWith(it) }
+    }
+
+    private fun parseRobotsTxt(text: String): Set<String> {
+        val disallowed = mutableSetOf<String>()
+        var inOurAgent = false
+        for (rawLine in text.lines()) {
+            val line = rawLine.trim()
+            when {
+                line.startsWith("User-agent:", ignoreCase = true) -> {
+                    val agent = line.substringAfter(":").trim()
+                    inOurAgent = agent == "*" || agent.lowercase().startsWith("alibot")
+                }
+                inOurAgent && line.startsWith("Disallow:", ignoreCase = true) -> {
+                    val path = line.substringAfter(":").trim()
+                    if (path.isNotEmpty()) disallowed.add(path)
+                }
+            }
+        }
+        return disallowed
+    }
     /// Reads from the app's private files/import/ directory.
     /// Push files there with: adb shell run-as com.ali.search sh -c 'cat > files/import/corpus.tsv'
     fun importFromTsv(filename: String = "corpus.tsv") {

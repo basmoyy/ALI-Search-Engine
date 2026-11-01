@@ -2,13 +2,12 @@ package com.ali.search.ui
 
 // SearchScreen.kt — Local search interface.
 //
-// Provides a search bar that queries the local ALI index in real time.
-// Results show title, URL snippet and BM25 score.
-// Latency is displayed after each query so hardware validation is visible.
-//
-// The screen calls AliViewModel.onQueryChange() which debounces and
-// dispatches search to Dispatchers.IO. The main thread is never blocked.
+// Phase 3: results show title, URL, excerpt, score and a tap-to-open link.
+// Works fully offline once content is indexed — no network needed for search.
 
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -29,17 +29,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ali.search.AliEngine
 import com.ali.search.AliViewModel
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.flow.debounce
 
-@OptIn(FlowPreview::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
     padding: PaddingValues,
     vm: AliViewModel = viewModel(),
 ) {
-    val state by vm.search.collectAsStateWithLifecycle()
-    val focusManager = LocalFocusManager.current
+    val state        by vm.search.collectAsStateWithLifecycle()
+    val focusManager  = LocalFocusManager.current
 
     Column(
         modifier = Modifier
@@ -63,7 +61,7 @@ fun SearchScreen(
                     }
                 }
             },
-            singleLine    = true,
+            singleLine      = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = {
                 vm.executeSearch()
@@ -78,18 +76,15 @@ fun SearchScreen(
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         } else if (state.query.isNotEmpty()) {
             Text(
-                text  = "${state.results.size} results · ${state.elapsedMs} ms",
+                text  = "${state.results.size} results · ${state.elapsedMs} ms (local index)",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
         state.error?.let { err ->
-            Text(
-                text  = err,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.labelSmall,
-            )
+            Text(err, color = MaterialTheme.colorScheme.error,
+                 style = MaterialTheme.typography.labelSmall)
         }
 
         Spacer(Modifier.height(8.dp))
@@ -113,9 +108,18 @@ fun SearchScreen(
 
 @Composable
 private fun ResultCard(result: AliEngine.Result) {
+    val context = LocalContext.current
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors   = CardDefaults.cardColors(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                // Phase 3: tap card to open the original page in the browser.
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(result.url))
+                    context.startActivity(intent)
+                } catch (_: Exception) {}
+            },
+        colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
     ) {
