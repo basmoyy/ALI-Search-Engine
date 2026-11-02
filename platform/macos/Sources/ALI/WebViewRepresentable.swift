@@ -136,11 +136,10 @@ final class BrowserContentViewController: NSViewController {
 
     func showTab(_ tab: BrowserTab) {
         guard let model else { return }
-        if tab.id == currentTabId { return }   // already showing this tab
-        currentTabId = tab.id
 
         // Remove existing subviews
         view.subviews.forEach { $0.removeFromSuperview() }
+        currentTabId = tab.id
 
         // Install the pooled WKWebView for this tab
         let wv = WebViewPool.shared.get(for: tab, model: model)
