@@ -13,10 +13,6 @@
 namespace ali {
 
 // ── DDL ──────────────────────────────────────────────────────────────────────
-//
-// Status column stores the CrawlStatus enum value as an INTEGER.
-// access_note stores an optional human-readable reason for Restricted,
-// AuthRequired, RateLimited, or TemporarilyUnavailable states.
 
 static const char* kSchemaSQL = R"sql(
 PRAGMA journal_mode = WAL;
@@ -27,13 +23,14 @@ CREATE TABLE IF NOT EXISTS urls (
     url_id          INTEGER PRIMARY KEY,
     url             TEXT    NOT NULL UNIQUE,
     canonical_url   TEXT    NOT NULL,
-    doc_id          INTEGER NOT NULL DEFAULT 4294967295,
+    doc_id          INTEGER NOT NULL DEFAULT 18446744073709551615,
     status          INTEGER NOT NULL DEFAULT 0,
     last_fetched_at INTEGER NOT NULL DEFAULT 0,
     next_fetch_at   INTEGER NOT NULL DEFAULT 0,
     fetch_failures  INTEGER NOT NULL DEFAULT 0,
     content_hash    INTEGER NOT NULL DEFAULT 0,
-    access_note     TEXT    NOT NULL DEFAULT ''
+    access_note     TEXT    NOT NULL DEFAULT '',
+    crawl_depth     INTEGER NOT NULL DEFAULT 0
 );
 
 -- Index for the crawl scheduler: eligible URLs ordered by next_fetch_at.
@@ -50,8 +47,6 @@ CREATE TABLE IF NOT EXISTS robots (
 );
 )sql";
 
-// Status values eligible for the crawl queue (must stay in sync with CrawlStatus).
-// Discovered=0, Queued=1, Stale=9, RateLimited=7, TemporarilyUnavailable=8
 static const char* kEligibleStatusList = "0,1,7,8,9";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,6 +82,7 @@ struct MetadataDb::Impl {
         rec.content_hash    = static_cast<uint32_t>(sqlite3_column_int64(stmt, 8));
         const char* note    = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
         rec.access_note     = note ? note : "";
+        rec.crawl_depth     = static_cast<uint32_t>(sqlite3_column_int64(stmt, 10));
         return rec;
     }
 };
@@ -100,7 +96,10 @@ bool MetadataDb::open() {
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX;
     int rc = sqlite3_open_v2(impl_->path.c_str(), &impl_->db, flags, nullptr);
     if (rc != SQLITE_OK) return false;
-    return impl_->exec(kSchemaSQL);
+    if (!impl_->exec(kSchemaSQL)) return false;
+    // Safe migration: add crawl_depth to existing DBs (ignore if already exists)
+    impl_->exec("ALTER TABLE urls ADD COLUMN crawl_depth INTEGER NOT NULL DEFAULT 0");
+    return true;
 }
 
 void MetadataDb::close() {
@@ -117,15 +116,16 @@ bool MetadataDb::upsert_url(const UrlRecord& rec) {
 
     const char* sql =
         "INSERT INTO urls(url, canonical_url, doc_id, status, "
-        "last_fetched_at, next_fetch_at, fetch_failures, content_hash, access_note) "
-        "VALUES(?,?,?,?,?,?,?,?,?) "
+        "last_fetched_at, next_fetch_at, fetch_failures, content_hash, access_note, crawl_depth) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(url) DO UPDATE SET "
         "canonical_url=excluded.canonical_url, doc_id=excluded.doc_id, "
         "status=excluded.status, last_fetched_at=excluded.last_fetched_at, "
         "next_fetch_at=excluded.next_fetch_at, "
         "fetch_failures=excluded.fetch_failures, "
         "content_hash=excluded.content_hash, "
-        "access_note=excluded.access_note";
+        "access_note=excluded.access_note, "
+        "crawl_depth=excluded.crawl_depth";
 
     sqlite3_stmt* stmt = nullptr;
     if (!impl_->prepare(sql, &stmt)) return false;
@@ -139,6 +139,7 @@ bool MetadataDb::upsert_url(const UrlRecord& rec) {
     sqlite3_bind_int64(stmt, 7, static_cast<int64_t>(rec.fetch_failures));
     sqlite3_bind_int64(stmt, 8, static_cast<int64_t>(rec.content_hash));
     sqlite3_bind_text(stmt,  9, rec.access_note.c_str(),   -1, SQLITE_STATIC);
+    sqlite3_bind_int64(stmt, 10, static_cast<int64_t>(rec.crawl_depth));
 
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -166,7 +167,7 @@ std::optional<UrlRecord> MetadataDb::find_url(const std::string& url) const {
 
     const char* sql =
         "SELECT url_id, url, canonical_url, doc_id, status, "
-        "last_fetched_at, next_fetch_at, fetch_failures, content_hash, access_note "
+        "last_fetched_at, next_fetch_at, fetch_failures, content_hash, access_note, crawl_depth "
         "FROM urls WHERE url = ? LIMIT 1";
 
     sqlite3_stmt* stmt = nullptr;
@@ -186,7 +187,7 @@ std::optional<UrlRecord> MetadataDb::find_by_doc_id(DocId doc_id) const {
 
     const char* sql =
         "SELECT url_id, url, canonical_url, doc_id, status, "
-        "last_fetched_at, next_fetch_at, fetch_failures, content_hash, access_note "
+        "last_fetched_at, next_fetch_at, fetch_failures, content_hash, access_note, crawl_depth "
         "FROM urls WHERE doc_id = ? LIMIT 1";
 
     sqlite3_stmt* stmt = nullptr;
@@ -206,7 +207,7 @@ std::vector<UrlRecord> MetadataDb::find_by_status(CrawlStatus status,
     if (!impl_->db) return {};
     const char* sql =
         "SELECT url_id, url, canonical_url, doc_id, status, "
-        "last_fetched_at, next_fetch_at, fetch_failures, content_hash, access_note "
+        "last_fetched_at, next_fetch_at, fetch_failures, content_hash, access_note, crawl_depth "
         "FROM urls WHERE status = ? LIMIT ?";
     sqlite3_stmt* stmt = nullptr;
     if (!impl_->prepare(sql, &stmt)) return {};
@@ -223,7 +224,6 @@ std::vector<UrlRecord> MetadataDb::find_by_status(CrawlStatus status,
 
 bool MetadataDb::remove_doc(DocId doc_id) {
     if (!impl_->db) return false;
-    // Set status = Removed (10). The posting lists remain until compaction.
     const char* sql =
         "UPDATE urls SET status = ?, access_note = 'removed' WHERE doc_id = ?";
     sqlite3_stmt* stmt = nullptr;
@@ -236,7 +236,6 @@ bool MetadataDb::remove_doc(DocId doc_id) {
 }
 
 bool MetadataDb::tombstone_doc(DocId doc_id) {
-    // Legacy alias: delegates to remove_doc().
     return remove_doc(doc_id);
 }
 
@@ -287,14 +286,10 @@ std::vector<UrlRecord> MetadataDb::pop_crawl_queue(uint32_t limit,
                                                     int64_t  now_unix) const {
     if (!impl_->db) return {};
 
-    // Only statuses that are safe to re-attempt are returned.
-    // Terminal statuses (Restricted=5, AuthRequired=6, Removed=10) are excluded.
-    // Fetching=2 is excluded (already in flight).
-    // Eligible: Discovered=0, Queued=1, RateLimited=7, TemporarilyUnavailable=8, Stale=9
     char sql[512];
     std::snprintf(sql, sizeof(sql),
         "SELECT url_id, url, canonical_url, doc_id, status, "
-        "last_fetched_at, next_fetch_at, fetch_failures, content_hash, access_note "
+        "last_fetched_at, next_fetch_at, fetch_failures, content_hash, access_note, crawl_depth "
         "FROM urls "
         "WHERE status IN (%s) AND next_fetch_at <= ? "
         "ORDER BY next_fetch_at ASC LIMIT ?",

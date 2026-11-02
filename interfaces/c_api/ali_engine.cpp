@@ -1,8 +1,4 @@
 // ali_engine.cpp — C API implementation bridging ali.h to the C++ core.
-//
-// Each AliEngine wraps the core objects needed for search and indexing.
-// All C-API functions validate their inputs and translate C++ exceptions
-// to AliStatus codes so callers never see C++ exceptions across the ABI.
 
 #include "ali.h"
 
@@ -15,14 +11,37 @@
 #include "ali/scanner/ali_scanner.h"
 #include "ali/locality/locality_memory.h"
 #include "ali/crawler/crawler.h"
+#include "ali/crawler/resource_controller.h"
 
 #include <atomic>
 #include <cassert>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+// ─── MutableResourceController ────────────────────────────────────────────────
+
+class MutableResourceController : public ali::ResourceController {
+public:
+    MutableResourceController() = default;
+
+    void update(const ali::DeviceConditions& cond) {
+        std::lock_guard lock(mtx_);
+        conditions_ = cond;
+    }
+
+    [[nodiscard]] ali::DeviceConditions conditions() const override {
+        std::lock_guard lock(mtx_);
+        return conditions_;
+    }
+
+private:
+    mutable std::mutex    mtx_;
+    ali::DeviceConditions conditions_;
+};
 
 // ─── Internal structs ─────────────────────────────────────────────────────────
 
@@ -34,14 +53,16 @@ struct AliEngine_ {
     std::string index_root;
     std::string db_path;
 
-    std::unique_ptr<ali::Manifest>       manifest;
-    std::unique_ptr<ali::MetadataDb>     db;
-    std::unique_ptr<ali::IndexWriter>    writer;
-    std::unique_ptr<ali::IndexReader>    reader;
-    std::unique_ptr<ali::LocalityMemory> locality;
-    std::unique_ptr<ali::AliScanner>     scanner;
-    std::unique_ptr<ali::Tokeniser>      tokeniser;
-    std::unique_ptr<ali::QueryPlanner>   planner;
+    std::unique_ptr<ali::Manifest>               manifest;
+    std::unique_ptr<ali::MetadataDb>             db;
+    std::unique_ptr<ali::IndexWriter>            writer;
+    std::unique_ptr<ali::IndexReader>            reader;
+    std::unique_ptr<ali::LocalityMemory>         locality;
+    std::unique_ptr<ali::AliScanner>             scanner;
+    std::unique_ptr<ali::Tokeniser>              tokeniser;
+    std::unique_ptr<ali::QueryPlanner>           planner;
+    std::unique_ptr<MutableResourceController>   resource_ctrl;
+    std::unique_ptr<ali::Crawler>                crawler;
 
     std::atomic<bool> cancel_flag{false};
 };
@@ -68,35 +89,34 @@ AliStatus ali_engine_open(const char* index_root,
         engine->index_root = index_root;
         engine->db_path    = db_path;
 
-        // Manifest
         engine->manifest = std::make_unique<ali::Manifest>(index_root);
         if (!engine->manifest->open()) return ALI_ERR_CORRUPT;
 
-        // Metadata DB
         engine->db = std::make_unique<ali::MetadataDb>(db_path);
         if (!engine->db->open()) return ALI_ERR_IO;
 
-        // Index writer
         ali::IndexWriterConfig wcfg;
         wcfg.index_root = index_root;
         engine->writer = std::make_unique<ali::IndexWriter>(
             wcfg, *engine->manifest, *engine->db);
         if (!engine->writer->open()) return ALI_ERR_IO;
 
-        // Index reader
         engine->reader = std::make_unique<ali::IndexReader>(*engine->manifest);
         if (!engine->reader->open()) return ALI_ERR_IO;
 
-        // Locality Memory
         engine->locality = std::make_unique<ali::LocalityMemory>();
 
-        // Scanner
         engine->scanner = std::make_unique<ali::AliScanner>(
             *engine->reader, *engine->locality);
 
-        // Query processing
         engine->tokeniser = std::make_unique<ali::Tokeniser>();
         engine->planner   = std::make_unique<ali::QueryPlanner>(*engine->reader);
+
+        // Resource controller and crawler
+        engine->resource_ctrl = std::make_unique<MutableResourceController>();
+        ali::CrawlerConfig ccfg;
+        engine->crawler = std::make_unique<ali::Crawler>(
+            ccfg, *engine->db, *engine->writer, *engine->resource_ctrl);
 
         *out_engine = engine.release();
         return ALI_OK;
@@ -109,11 +129,10 @@ void ali_engine_close(AliEngine* engine) {
     if (!engine) return;
     try {
         engine->cancel_flag.store(true);
-        if (engine->writer) engine->writer->close();
-        if (engine->db)     engine->db->close();
-    } catch (...) {
-        // Swallow; we are shutting down.
-    }
+        if (engine->crawler) engine->crawler->stop();
+        if (engine->writer)  engine->writer->close();
+        if (engine->db)      engine->db->close();
+    } catch (...) {}
     delete engine;
 }
 
@@ -134,9 +153,9 @@ AliStatus ali_search(AliEngine*   engine,
         engine->reader->maybe_refresh();
 
         ali::Query q;
-        q.raw_text  = query_text;
-        q.tokens    = engine->tokeniser->tokenise_query(query_text);
-        q.top_k     = top_k;
+        q.raw_text   = query_text;
+        q.tokens     = engine->tokeniser->tokenise_query(query_text);
+        q.top_k      = top_k;
         q.timeout_ms = (timeout_ms > 0) ? timeout_ms : 200;
 
         ali::QueryPlan plan = engine->planner->plan(q);
@@ -213,9 +232,6 @@ AliStatus ali_index_document(AliEngine*  engine,
     if (!engine || !url || !title || !body_text) return ALI_ERR_INVALID_ARG;
 
     try {
-        auto tokens    = engine->tokeniser->tokenise_document(body_text);
-        auto term_freqs = ali::Tokeniser::compute_term_freqs(tokens);
-
         ali::InputDocument doc;
         doc.url       = url;
         doc.title     = title;
@@ -243,32 +259,78 @@ AliStatus ali_index_flush(AliEngine* engine) {
 // ─── Crawler ─────────────────────────────────────────────────────────────────
 
 AliStatus ali_crawler_start(AliEngine* engine) {
-    (void)engine; // Crawler initialisation deferred; stub for now.
-    return ALI_OK;
+    if (!engine) return ALI_ERR_INVALID_ARG;
+    try {
+        engine->crawler->start();
+        return ALI_OK;
+    } catch (...) {
+        return translate_exception();
+    }
 }
 
 AliStatus ali_crawler_pause(AliEngine* engine) {
-    (void)engine;
-    return ALI_OK;
+    if (!engine) return ALI_ERR_INVALID_ARG;
+    try {
+        engine->crawler->pause();
+        return ALI_OK;
+    } catch (...) {
+        return translate_exception();
+    }
 }
 
 AliStatus ali_crawler_stop(AliEngine* engine) {
-    (void)engine;
-    return ALI_OK;
+    if (!engine) return ALI_ERR_INVALID_ARG;
+    try {
+        engine->crawler->stop();
+        return ALI_OK;
+    } catch (...) {
+        return translate_exception();
+    }
 }
 
 AliStatus ali_crawler_enqueue_url(AliEngine* engine, const char* url) {
     if (!engine || !url) return ALI_ERR_INVALID_ARG;
-    return ALI_OK;
+    try {
+        engine->crawler->enqueue_urls({url});
+        return ALI_OK;
+    } catch (...) {
+        return translate_exception();
+    }
+}
+
+// ─── Device conditions ────────────────────────────────────────────────────────
+
+AliStatus ali_update_device_conditions(AliEngine* engine,
+                                        int        network_available,
+                                        int        network_metered,
+                                        int        charging,
+                                        int        battery_level_pct,
+                                        int        thermal_throttling,
+                                        int        memory_pressure,
+                                        uint64_t   free_storage_bytes) {
+    if (!engine) return ALI_ERR_INVALID_ARG;
+    try {
+        ali::DeviceConditions cond;
+        cond.network_available  = (network_available  != 0);
+        cond.network_metered    = (network_metered    != 0);
+        cond.charging           = (charging           != 0);
+        cond.battery_level_pct  = battery_level_pct;
+        cond.thermal_throttling = (thermal_throttling != 0);
+        cond.memory_pressure    = (memory_pressure    != 0);
+        cond.free_storage_bytes = free_storage_bytes;
+        engine->resource_ctrl->update(cond);
+        return ALI_OK;
+    } catch (...) {
+        return translate_exception();
+    }
 }
 
 // ─── Statistics ───────────────────────────────────────────────────────────────
 
 AliStatus ali_stats_doc_count(AliEngine* engine, uint64_t* out_count) {
     if (!engine || !out_count) return ALI_ERR_INVALID_ARG;
-    // Use the reader's view (reflects all published segments) rather than
-    // the session-scoped writer counter.
-    *out_count = static_cast<uint64_t>(engine->reader->total_doc_count());
+    *out_count = static_cast<uint64_t>(engine->reader->total_doc_count())
+               + engine->writer->temp_index().doc_count();
     return ALI_OK;
 }
 

@@ -28,10 +28,12 @@ public:
     /// Enqueue a URL if it has not been seen before.
     /// Returns true if the URL was newly added.
     bool enqueue(const std::string& url,
-                 const std::string& canonical_url = {});
+                 const std::string& canonical_url = {},
+                 uint32_t           crawl_depth   = 0);
 
     /// Bulk enqueue discovered outbound links. Skips duplicates silently.
-    void enqueue_discovered(const std::vector<std::string>& urls);
+    void enqueue_discovered(const std::vector<std::string>& urls,
+                             uint32_t                         crawl_depth = 0);
 
     /// Return up to `limit` URLs eligible for crawling right now.
     std::vector<UrlRecord> pop(uint32_t limit, int64_t now_unix);

@@ -10,7 +10,16 @@ namespace ali {
 // ─── Identifiers ─────────────────────────────────────────────────────────────
 
 /// Stable internal document identifier. Never derived from a URL.
-using DocId = uint32_t;
+///
+/// Global layout (64-bit):
+///   bits 63-32 : doc_id_base — the global offset assigned to this segment at
+///                publish time (first doc's global id = base, last = base+N-1).
+///   bits 31-0  : local_id   — per-segment sequential id (0 .. N-1).
+///
+/// This ensures doc ids are globally unique across any number of segments.
+/// Use global_doc_id(base, local) to construct and doc_id_base/local_doc_id
+/// to decompose.
+using DocId = uint64_t;
 
 /// Term identifier within a single segment's dictionary.
 using TermId = uint32_t;
@@ -23,17 +32,34 @@ using Generation = uint32_t;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-static constexpr DocId  kInvalidDocId  = UINT32_MAX;
-static constexpr TermId kInvalidTermId = UINT32_MAX;
+static constexpr DocId   kInvalidDocId   = UINT64_MAX;
+static constexpr TermId  kInvalidTermId  = UINT32_MAX;
 static constexpr BlockId kInvalidBlockId = UINT64_MAX;
+
+// ─── Global doc ID helpers ────────────────────────────────────────────────────
+
+/// Construct a globally-unique DocId from a segment base and a local (per-segment) index.
+inline constexpr DocId global_doc_id(uint32_t base, uint32_t local) noexcept {
+    return (static_cast<uint64_t>(base) << 32) | static_cast<uint64_t>(local);
+}
+
+/// Extract the segment-base component of a global DocId.
+inline constexpr uint32_t doc_id_base(DocId id) noexcept {
+    return static_cast<uint32_t>(id >> 32);
+}
+
+/// Extract the local (per-segment) component of a global DocId.
+inline constexpr uint32_t local_doc_id(DocId id) noexcept {
+    return static_cast<uint32_t>(id & 0xFFFF'FFFFu);
+}
 
 // ─── Segment bounds ───────────────────────────────────────────────────────────
 
 struct SegmentRange {
     DocId first_doc = 0;
-    DocId last_doc  = 0;       ///< inclusive
+    DocId last_doc  = 0;       ///< inclusive (global DocIds)
 
-    [[nodiscard]] uint32_t count() const noexcept {
+    [[nodiscard]] uint64_t count() const noexcept {
         return (last_doc >= first_doc) ? (last_doc - first_doc + 1) : 0;
     }
 };

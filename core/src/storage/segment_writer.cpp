@@ -3,16 +3,17 @@
 // Writes posting lists, term dictionary, block metadata and document table
 // to a temporary directory, then publishes atomically via rename.
 //
-// Wire format (FORMAT_VERSION 1):
-//   segment_header.bin  — magic, version, generation, counts, checksums
+// Wire format (FORMAT_VERSION 2):
+//   segment_header.bin  — magic, version, generation, doc_id_base, doc_count, term_count
 //   terms.bin           — sorted term dictionary
 //   postings.bin        — compressed posting-list blocks
 //   blocks.bin          — BlockMeta array (for Block-Max WAND)
-//   docs.bin            — DocumentMeta array
+//   docs.bin            — DocumentMeta array (8-byte global DocIds)
 //   content.bin         — optional title + excerpt blobs
 
 #include "ali/storage/segment_writer.h"
 #include "ali/compression/codec.h"
+#include "ali/ranking/bm25.h"
 
 #include <cassert>
 #include <cstring>
@@ -26,10 +27,10 @@ namespace ali {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static constexpr uint8_t  kSegMagic[4]  = {'A','L','I','S'};
-static constexpr uint32_t kSegFmtVersion = 1;
+static constexpr uint32_t kSegFmtVersion = 2;
 
 struct InMemoryPosting {
-    DocId    doc_id;
+    uint32_t local_id;   // per-segment local id (0..N-1)
     uint32_t term_freq;
 };
 
@@ -40,7 +41,7 @@ struct InMemoryTerm {
 };
 
 struct InMemoryDoc {
-    DocId       doc_id;
+    uint32_t    local_id;
     std::string url;
     std::string title;
     std::string excerpt;   // first 256 chars of body
@@ -51,13 +52,13 @@ struct SegmentWriter::Impl {
     std::filesystem::path tmp_dir;
     SegmentWriterConfig   cfg;
 
-    DocId next_doc_id = 0;
+    uint32_t next_local_id = 0;
     std::unordered_map<std::string, InMemoryTerm> term_map;
     std::vector<InMemoryDoc> docs;
     uint64_t estimated_bytes = 0;
 
     bool full() const noexcept {
-        return next_doc_id >= cfg.max_docs
+        return next_local_id >= cfg.max_docs
             || estimated_bytes >= cfg.max_segment_bytes;
     }
 
@@ -80,10 +81,10 @@ DocId SegmentWriter::add_document(
 {
     if (impl_->full() || url.empty()) return kInvalidDocId;
 
-    const DocId doc_id = impl_->next_doc_id++;
+    const uint32_t local_id = impl_->next_local_id++;
 
     InMemoryDoc doc;
-    doc.doc_id     = doc_id;
+    doc.local_id   = local_id;
     doc.url        = url;
     doc.title      = title;
     doc.excerpt    = std::string(text.substr(0, 256));
@@ -94,31 +95,44 @@ DocId SegmentWriter::add_document(
         doc.term_count += freq;
         auto& entry = impl_->term_map[term];
         if (entry.text.empty()) entry.text = term;
-        entry.postings.push_back({doc_id, freq});
+        entry.postings.push_back({local_id, freq});
         entry.doc_frequency++;
         impl_->estimated_bytes += term.size() + 8;
     }
 
     impl_->docs.push_back(std::move(doc));
     impl_->estimated_bytes += url.size() + title.size() + 64;
-    return doc_id;
+    // Return a placeholder DocId using local_id; caller uses doc_id_base to form global id
+    return static_cast<DocId>(local_id);
 }
 
-bool SegmentWriter::finish(const std::filesystem::path& dest_dir, Generation generation) {
+bool SegmentWriter::finish(const std::filesystem::path& dest_dir,
+                            Generation generation,
+                            uint32_t   doc_id_base) {
     if (impl_->docs.empty()) return false;
 
     std::error_code ec;
     std::filesystem::create_directories(dest_dir, ec);
     if (ec) return false;
 
+    const uint32_t doc_count = static_cast<uint32_t>(impl_->docs.size());
+
+    // Compute avg doc length for WAND max_score
+    uint64_t total_terms = 0;
+    for (const auto& d : impl_->docs) total_terms += d.term_count;
+    const float avg_dl = (doc_count > 0)
+        ? static_cast<float>(total_terms) / static_cast<float>(doc_count)
+        : 1.0f;
+
     // ── Write docs.bin ───────────────────────────────────────────────────────
     {
         std::ofstream f(dest_dir / "docs.bin", std::ios::binary | std::ios::trunc);
         if (!f) return false;
-        const uint32_t count = static_cast<uint32_t>(impl_->docs.size());
-        f.write(reinterpret_cast<const char*>(&count), 4);
+        f.write(reinterpret_cast<const char*>(&doc_count), 4);
         for (const auto& d : impl_->docs) {
-            f.write(reinterpret_cast<const char*>(&d.doc_id),     4);
+            // Convert local_id to global DocId
+            const DocId global_id = global_doc_id(doc_id_base, d.local_id);
+            f.write(reinterpret_cast<const char*>(&global_id),   8);
             f.write(reinterpret_cast<const char*>(&d.term_count), 4);
             const uint16_t url_len  = static_cast<uint16_t>(d.url.size());
             const uint16_t ttl_len  = static_cast<uint16_t>(d.title.size());
@@ -155,6 +169,9 @@ bool SegmentWriter::finish(const std::filesystem::path& dest_dir, Generation gen
         auto& codec = compression::codec_for_id(compression::default_codec());
         const uint32_t block_size = impl_->cfg.block_size_docs;
 
+        // Build scorer for WAND max_score computation
+        Bm25Scorer scorer({}, doc_count, avg_dl);
+
         for (InMemoryTerm* t : sorted_terms) {
             const uint64_t postings_offset = static_cast<uint64_t>(pf.tellp());
             const uint64_t block_meta_offset = static_cast<uint64_t>(bf.tellp());
@@ -173,15 +190,23 @@ bool SegmentWriter::finish(const std::filesystem::path& dest_dir, Generation gen
                 std::vector<uint32_t> doc_ids, freqs;
                 doc_ids.reserve(bcount);
                 freqs.reserve(bcount);
-                float max_score = 0.0f;
 
+                // Find min term_count in block for WAND upper bound
+                uint32_t min_term_count = UINT32_MAX;
                 for (uint32_t i = bstart; i < bend; ++i) {
-                    doc_ids.push_back(postings[i].doc_id);
+                    const uint32_t local_id = postings[i].local_id;
+                    if (local_id < impl_->docs.size()) {
+                        min_term_count = std::min(min_term_count,
+                            impl_->docs[local_id].term_count);
+                    }
+                    doc_ids.push_back(local_id);
                     freqs.push_back(postings[i].term_freq);
-                    // crude upper-bound score for this block (full BM25 computed in ranking)
-                    max_score = std::max(max_score,
-                        static_cast<float>(postings[i].term_freq) + 1.0f);
                 }
+                if (min_term_count == UINT32_MAX) min_term_count = 1;
+
+                // Compute max_score using BM25 upper bound
+                const float max_score = scorer.max_tf_contribution(
+                    t->doc_frequency, 0, min_term_count);
 
                 auto deltas = compression::encode_deltas(doc_ids);
 
@@ -201,12 +226,14 @@ bool SegmentWriter::finish(const std::filesystem::path& dest_dir, Generation gen
                 pf.write(reinterpret_cast<const char*>(enc_doc.data()),  static_cast<std::streamsize>(doc_bytes));
                 pf.write(reinterpret_cast<const char*>(enc_freq.data()), static_cast<std::streamsize>(freq_bytes));
 
-                // Block metadata
+                // Block metadata — use global DocIds
+                const DocId first_global = global_doc_id(doc_id_base, doc_ids.front());
+                const DocId last_global  = global_doc_id(doc_id_base, doc_ids.back());
+
                 BlockMeta bm;
-                bm.block_id        = static_cast<BlockId>(
-                    (static_cast<uint64_t>(b) << 32) | doc_ids.front());
-                bm.first_doc       = doc_ids.front();
-                bm.last_doc        = doc_ids.back();
+                bm.block_id        = (static_cast<uint64_t>(doc_id_base) << 32) | b;
+                bm.first_doc       = first_global;
+                bm.last_doc        = last_global;
                 bm.max_score       = max_score;
                 bm.file_offset     = block_file_offset;
                 bm.compressed_len  = compressed_len;
@@ -241,7 +268,7 @@ bool SegmentWriter::finish(const std::filesystem::path& dest_dir, Generation gen
         hf.write(reinterpret_cast<const char*>(kSegMagic), 4);
         hf.write(reinterpret_cast<const char*>(&kSegFmtVersion), 4);
         hf.write(reinterpret_cast<const char*>(&generation), 4);
-        const uint32_t doc_count = static_cast<uint32_t>(impl_->docs.size());
+        hf.write(reinterpret_cast<const char*>(&doc_id_base), 4);
         hf.write(reinterpret_cast<const char*>(&doc_count), 4);
         const uint32_t term_count = static_cast<uint32_t>(impl_->term_map.size());
         hf.write(reinterpret_cast<const char*>(&term_count), 4);
@@ -252,12 +279,12 @@ bool SegmentWriter::finish(const std::filesystem::path& dest_dir, Generation gen
     impl_->term_map.clear();
     impl_->docs.clear();
     impl_->estimated_bytes = 0;
-    impl_->next_doc_id     = 0;
+    impl_->next_local_id   = 0;
 
     return true;
 }
 
-uint32_t SegmentWriter::doc_count()       const noexcept { return impl_->next_doc_id; }
+uint32_t SegmentWriter::doc_count()       const noexcept { return impl_->next_local_id; }
 uint64_t SegmentWriter::estimated_bytes() const noexcept { return impl_->estimated_bytes; }
 bool     SegmentWriter::is_full()         const noexcept { return impl_->full(); }
 

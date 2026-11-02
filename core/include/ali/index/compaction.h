@@ -15,9 +15,10 @@
 namespace ali {
 
 struct CompactionConfig {
-    uint32_t max_segments_before_compact = 8;   ///< trigger when live segments exceed this
+    uint32_t max_segments_before_compact = 8;
     uint32_t target_docs_per_segment     = 65536;
     uint64_t max_segment_bytes           = 256ULL * 1024 * 1024;
+    uint32_t block_size_docs             = 128;
 };
 
 /// Result of one compaction run.

@@ -49,8 +49,11 @@ public:
     /// Finalise the segment: flush all structures, write checksums and
     /// publish to `dest_dir`. On success the writer is consumed and the
     /// temporary files are removed. On failure dest_dir is untouched.
+    /// @param doc_id_base  Global base offset for this segment. Each document's
+    ///                     global DocId = global_doc_id(doc_id_base, local_id).
     [[nodiscard]] bool finish(const std::filesystem::path& dest_dir,
-                              Generation generation);
+                              Generation generation,
+                              uint32_t   doc_id_base = 0);
 
     [[nodiscard]] uint32_t doc_count()        const noexcept;
     [[nodiscard]] uint64_t estimated_bytes()  const noexcept;

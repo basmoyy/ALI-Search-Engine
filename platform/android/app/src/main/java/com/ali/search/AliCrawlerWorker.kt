@@ -35,7 +35,10 @@ class AliCrawlerWorker(
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val rc = AliResourceController(applicationContext)
 
-        // Re-check conditions at the start of each work invocation.
+        // Get current device conditions
+        val cond = rc.currentConditions()
+
+        // Pre-flight check
         if (!rc.mayCrawl()) return@withContext Result.retry()
 
         val paths  = AliStoragePaths.get(applicationContext)
@@ -43,13 +46,37 @@ class AliCrawlerWorker(
             ?: return@withContext Result.failure()
 
         try {
+            // Push real device conditions to native engine
+            engine.updateDeviceConditions(
+                networkAvailable  = cond.networkAvailable,
+                networkMetered    = cond.networkMetered,
+                charging          = cond.charging,
+                batteryLevelPct   = cond.batteryLevelPct,
+                thermalThrottling = cond.thermalThrottling,
+                memoryPressure    = cond.memoryPressure,
+                freeStorageBytes  = cond.freeStorageBytes,
+            )
+
             engine.crawlerStart()
-            // Run for up to 3 minutes or until conditions change.
+
+            // Run for up to 3 minutes or until conditions change
             val deadline = System.currentTimeMillis() + 3 * 60 * 1000L
             while (System.currentTimeMillis() < deadline && rc.mayCrawl()) {
                 Thread.sleep(5_000L)
+                // Refresh conditions periodically
+                val updatedCond = rc.currentConditions()
+                engine.updateDeviceConditions(
+                    networkAvailable  = updatedCond.networkAvailable,
+                    networkMetered    = updatedCond.networkMetered,
+                    charging          = updatedCond.charging,
+                    batteryLevelPct   = updatedCond.batteryLevelPct,
+                    thermalThrottling = updatedCond.thermalThrottling,
+                    memoryPressure    = updatedCond.memoryPressure,
+                    freeStorageBytes  = updatedCond.freeStorageBytes,
+                )
             }
-            engine.crawlerPause()
+
+            engine.crawlerStop()
             Result.success()
         } catch (e: Exception) {
             Result.retry()

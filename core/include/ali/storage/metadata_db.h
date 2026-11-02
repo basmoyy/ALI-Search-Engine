@@ -74,6 +74,7 @@ struct UrlRecord {
     uint32_t    fetch_failures  = 0;
     uint32_t    content_hash    = 0;   ///< cheap fingerprint for dedup
     std::string access_note;           ///< optional: reason for Restricted/AuthRequired/etc.
+    uint32_t    crawl_depth     = 0;   ///< hop distance from seed (0 = seed itself)
 };
 
 struct RobotsRecord {

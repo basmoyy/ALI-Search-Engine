@@ -14,11 +14,12 @@
 namespace ali {
 
 struct TokeniserConfig {
-    uint32_t max_token_length  = 64;    ///< tokens beyond this length are discarded
-    uint32_t max_tokens        = 128;   ///< hard cap on tokens per document/query
-    bool     lowercase         = true;
+    uint32_t max_token_length   = 64;
+    uint32_t max_tokens         = 512;   ///< hard cap on tokens per document
+    uint32_t max_query_tokens   = 32;    ///< separate cap for query strings
+    bool     lowercase          = true;
     bool     remove_punctuation = true;
-    bool     remove_stopwords  = true;  ///< basic English stop-word list
+    bool     remove_stopwords   = true;
 };
 
 class Tokeniser {

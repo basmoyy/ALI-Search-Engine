@@ -1,5 +1,5 @@
 # Build directories
-build/
+build*/
 cmake-build-*/
 out/
 
@@ -34,3 +34,6 @@ benchmarks/reports/*.md
 
 # Test temporaries
 *.tmp
+
+# Kiro IDE
+.kiro/

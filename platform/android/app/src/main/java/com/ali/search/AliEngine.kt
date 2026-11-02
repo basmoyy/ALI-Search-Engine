@@ -70,6 +70,29 @@ class AliEngine private constructor(private val handle: Long) {
     fun crawlerEnqueue(url: String): Boolean =
         nativeCrawlerEnqueue(handle, url) == 0
 
+    /**
+     * Push current device conditions to the native engine.
+     * Call this before crawling and periodically during long crawl sessions.
+     */
+    fun updateDeviceConditions(
+        networkAvailable: Boolean,
+        networkMetered: Boolean,
+        charging: Boolean,
+        batteryLevelPct: Int,
+        thermalThrottling: Boolean,
+        memoryPressure: Boolean,
+        freeStorageBytes: Long,
+    ): Boolean = nativeUpdateDeviceConditions(
+        handle,
+        if (networkAvailable) 1 else 0,
+        if (networkMetered) 1 else 0,
+        if (charging) 1 else 0,
+        batteryLevelPct,
+        if (thermalThrottling) 1 else 0,
+        if (memoryPressure) 1 else 0,
+        freeStorageBytes,
+    ) == 0
+
     // ── Statistics ────────────────────────────────────────────────────────────
 
     /** Total documents indexed since the engine was opened. */
@@ -130,6 +153,12 @@ class AliEngine private constructor(private val handle: Long) {
         @JvmStatic private external fun nativeCrawlerPause(handle: Long): Int
         @JvmStatic private external fun nativeCrawlerStop(handle: Long): Int
         @JvmStatic private external fun nativeCrawlerEnqueue(handle: Long, url: String): Int
+        @JvmStatic private external fun nativeUpdateDeviceConditions(
+            handle: Long,
+            networkAvailable: Int, networkMetered: Int, charging: Int,
+            batteryLevelPct: Int, thermalThrottling: Int,
+            memoryPressure: Int, freeStorageBytes: Long,
+        ): Int
         @JvmStatic private external fun nativeDocCount(handle: Long, out: LongArray): Int
         @JvmStatic private external fun nativeSegmentCount(handle: Long, out: IntArray): Int
         @JvmStatic private external fun nativeIndexBytes(handle: Long, out: LongArray): Int

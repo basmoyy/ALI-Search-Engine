@@ -132,6 +132,7 @@ struct Crawler::Impl {
         const std::string path = path_of(url);
         if (host.empty()) return true;
 
+        // Fast path: in-memory cache
         {
             std::lock_guard lock(robots_mtx_);
             auto it = robots_cache_.find(host);
@@ -140,7 +141,28 @@ struct Crawler::Impl {
             }
         }
 
-        // Fetch robots.txt for this host (not counted in politeness delay).
+        // Check SQLite cache
+        const int64_t now_s = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        auto stored = db.find_robots(host);
+        if (stored && stored->expires_at > now_s) {
+            // Parse stored rules and cache in memory
+            RobotsEntry entry;
+            if (!stored->rules_text.empty()) {
+                std::vector<uint8_t> body(stored->rules_text.begin(),
+                                          stored->rules_text.end());
+                entry = parse_robots_txt(body);
+            }
+            entry.fetched_at = stored->fetched_at;
+            {
+                std::lock_guard lock(robots_mtx_);
+                robots_cache_[host] = entry;
+            }
+            return robots_allows(entry, path);
+        }
+
+        // Fetch robots.txt for this host
         std::string scheme = url.substr(0, url.find("://"));
         std::string robots_url = scheme + "://" + host + "/robots.txt";
 
@@ -152,12 +174,21 @@ struct Crawler::Impl {
         auto r = rf.fetch(robots_url);
 
         RobotsEntry entry;
+        std::string rules_text;
         if (r.code == FetchResultCode::Ok && !r.body.empty()) {
             entry = parse_robots_txt(r.body);
+            rules_text = std::string(reinterpret_cast<const char*>(r.body.data()),
+                                     r.body.size());
         }
-        // Cache regardless of fetch result (treat failure as allow-all).
-        entry.fetched_at = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+        entry.fetched_at = now_s;
+
+        // Persist to SQLite (24h TTL)
+        ali::RobotsRecord rr;
+        rr.host       = host;
+        rr.rules_text = rules_text;
+        rr.fetched_at = now_s;
+        rr.expires_at = now_s + 24 * 3600;
+        (void)db.upsert_robots(rr);
 
         {
             std::lock_guard lock(robots_mtx_);
@@ -316,8 +347,9 @@ struct Crawler::Impl {
                     }
 
                     // Enqueue discovered links (bounded by discovery depth)
-                    if (rec.fetch_failures < cfg.discovery_depth) {
-                        frontier.enqueue_discovered(parsed.links);
+                    const uint32_t next_depth = rec.crawl_depth + 1;
+                    if (next_depth <= cfg.discovery_depth) {
+                        frontier.enqueue_discovered(parsed.links, next_depth);
                     }
 
                     return true;

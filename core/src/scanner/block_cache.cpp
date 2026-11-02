@@ -1,75 +1,43 @@
-// block_cache.cpp — Bounded decoded-block cache with LRU eviction.
-
-#include "ali/scanner/ali_scanner.h"
-#include "ali/locality/locality_memory.h"
-#include "ali/storage/types.h"
-
-#include <list>
-#include <unordered_map>
-#include <vector>
-#include <mutex>
+#include "ali/scanner/block_cache.h"
 
 namespace ali {
 
-/// A simple bounded block cache. Evicts the LRU entry when the byte budget
-/// is exceeded. Locality Memory is consulted for admission but not eviction.
-class BlockCache {
-public:
-    explicit BlockCache(uint32_t max_bytes) : max_bytes_(max_bytes), used_bytes_(0) {}
+BlockCache::BlockCache(uint32_t max_bytes, LocalityMemory& locality)
+    : max_bytes_(max_bytes), locality_(locality) {}
+BlockCache::~BlockCache() = default;
 
-    struct Entry {
-        BlockId              block_id;
-        std::vector<Posting> postings;
-        uint32_t             size_bytes;
-    };
+const CompressedBlock* BlockCache::find(BlockId id) const {
+    auto it = map_.find(id);
+    if (it == map_.end()) return nullptr;
+    lru_.splice(lru_.begin(), lru_, it->second);
+    return &it->second->block;
+}
 
-    const std::vector<Posting>* find(BlockId id) {
-        auto it = map_.find(id);
-        if (it == map_.end()) return nullptr;
-        // Move to front (most recently used).
-        lru_.splice(lru_.begin(), lru_, it->second);
-        return &it->second->postings;
+void BlockCache::insert(BlockId id, const CompressedBlock& block) {
+    if (max_bytes_ == 0) return;
+    if (map_.count(id)) return;
+    const uint32_t size = static_cast<uint32_t>(block.data.size()) + sizeof(BlockMeta);
+    if (size > max_bytes_) return;
+    while (used_bytes_ + size > max_bytes_ && !lru_.empty()) evict_lru();
+    // Cold-start: always admit. Locality gates eviction only under pressure.
+    if (used_bytes_ + size > max_bytes_) {
+        if (!locality_.should_admit(id, static_cast<float>(size))) return;
     }
+    lru_.push_front(Entry{id, block, size});
+    map_[id] = lru_.begin();
+    used_bytes_ += size;
+}
 
-    void insert(BlockId id, std::vector<Posting> postings,
-                LocalityMemory& locality, float cost) {
-        const uint32_t size = static_cast<uint32_t>(
-            postings.size() * sizeof(Posting));
+void BlockCache::clear() { lru_.clear(); map_.clear(); used_bytes_ = 0; }
+uint32_t BlockCache::used_bytes()  const noexcept { return used_bytes_; }
+uint32_t BlockCache::entry_count() const noexcept { return static_cast<uint32_t>(lru_.size()); }
 
-        // Respect the byte budget.
-        while (used_bytes_ + size > max_bytes_ && !lru_.empty()) {
-            evict_lru();
-        }
-        if (size > max_bytes_) return; // single entry too large; skip
-
-        if (!locality.should_admit(id, cost)) return;
-
-        lru_.push_front(Entry{id, std::move(postings), size});
-        map_[id] = lru_.begin();
-        used_bytes_ += size;
-    }
-
-    void clear() {
-        lru_.clear();
-        map_.clear();
-        used_bytes_ = 0;
-    }
-
-    uint32_t used_bytes() const noexcept { return used_bytes_; }
-
-private:
-    void evict_lru() {
-        if (lru_.empty()) return;
-        auto& back = lru_.back();
-        used_bytes_ -= back.size_bytes;
-        map_.erase(back.block_id);
-        lru_.pop_back();
-    }
-
-    uint32_t                                              max_bytes_;
-    uint32_t                                              used_bytes_;
-    std::list<Entry>                                      lru_;
-    std::unordered_map<BlockId, std::list<Entry>::iterator> map_;
-};
+void BlockCache::evict_lru() {
+    if (lru_.empty()) return;
+    auto& back = lru_.back();
+    used_bytes_ -= back.size_bytes;
+    map_.erase(back.block_id);
+    lru_.pop_back();
+}
 
 } // namespace ali

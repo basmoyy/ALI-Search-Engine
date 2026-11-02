@@ -45,6 +45,7 @@ add_library(ali_core STATIC
 
   # ── Index (Phase 4 navigation + Phase 10 compaction) ─────────────────────
   src/index/compaction.cpp
+  src/index/temp_index.cpp
 )
 
 target_include_directories(ali_core

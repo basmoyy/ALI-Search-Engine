@@ -143,6 +143,17 @@ AliStatus ali_crawler_pause(AliEngine* engine);
 AliStatus ali_crawler_stop(AliEngine* engine);
 AliStatus ali_crawler_enqueue_url(AliEngine* engine, const char* url);
 
+/* ── Device conditions bridge ────────────────────────────────────────────── */
+
+AliStatus ali_update_device_conditions(AliEngine* engine,
+                                        int        network_available,
+                                        int        network_metered,
+                                        int        charging,
+                                        int        battery_level_pct,
+                                        int        thermal_throttling,
+                                        int        memory_pressure,
+                                        uint64_t   free_storage_bytes);
+
 /* ── Statistics ──────────────────────────────────────────────────────────── */
 
 AliStatus ali_stats_doc_count(AliEngine* engine, uint64_t* out_count);

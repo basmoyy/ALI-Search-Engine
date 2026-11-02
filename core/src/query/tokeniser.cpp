@@ -32,7 +32,12 @@ static bool is_separator(char c) {
 }
 
 std::vector<Token> Tokeniser::tokenise_query(std::string_view text) const {
-    return tokenise_document(text);
+    // Use min(max_tokens, max_query_tokens) as the cap for query tokenisation
+    const uint32_t saved_max = impl_->cfg.max_tokens;
+    impl_->cfg.max_tokens = std::min(saved_max, impl_->cfg.max_query_tokens);
+    auto result = tokenise_document(text);
+    impl_->cfg.max_tokens = saved_max;
+    return result;
 }
 
 std::vector<Token> Tokeniser::tokenise_document(std::string_view text) const {

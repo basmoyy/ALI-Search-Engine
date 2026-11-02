@@ -124,6 +124,19 @@ Java_com_ali_search_AliEngine_nativeCrawlerEnqueue(JNIEnv* env, jclass,
 // ── Statistics ────────────────────────────────────────────────────────────────
 
 JNIEXPORT jint JNICALL
+Java_com_ali_search_AliEngine_nativeUpdateDeviceConditions(
+        JNIEnv*, jclass, jlong handle,
+        jint network_available, jint network_metered, jint charging,
+        jint battery_level_pct, jint thermal_throttling,
+        jint memory_pressure, jlong free_storage_bytes) {
+    return ali_update_device_conditions(
+        reinterpret_cast<AliEngine*>(handle),
+        network_available, network_metered, charging,
+        battery_level_pct, thermal_throttling, memory_pressure,
+        static_cast<uint64_t>(free_storage_bytes));
+}
+
+JNIEXPORT jint JNICALL
 Java_com_ali_search_AliEngine_nativeDocCount(JNIEnv* env, jclass,
                                               jlong handle, jlongArray out) {
     uint64_t count = 0;
