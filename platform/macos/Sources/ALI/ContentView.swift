@@ -285,9 +285,11 @@ struct BrowserPane: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            WebViewRepresentable(tab: tab, model: model)
+            // Uses the pool-backed view controller — tab switches work correctly
+            BrowserContentView(tab: tab, model: model)
                 .ignoresSafeArea()
-            if tab.isLoading {
+
+            if tab.isLoading && tab.loadProgress < 1 {
                 ProgressView(value: tab.loadProgress)
                     .progressViewStyle(.linear)
                     .frame(height: 2)
@@ -368,6 +370,8 @@ struct SearchResultsView: View {
         guard let u = URL(string: url) else { return }
         showSearch     = false
         addressBarText = url
+        // Navigate the active tab immediately — no extra Enter needed
+        if model.activeTab == nil { model.newTab() }
         model.navigate(to: u)
     }
 }

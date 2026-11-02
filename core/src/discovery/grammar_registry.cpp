@@ -351,6 +351,31 @@ std::vector<GrammarResult> GrammarRegistry::construct(const std::string& query,
     const QueryType qtype = classify_query(query);
     const std::string topic = normalise_topic(query);
 
+    // ── Navigational-query guard ─────────────────────────────────────────────
+    // If the query is a single word with no question words or search operators,
+    // it's likely a brand/site name (e.g. "youtube", "reddit", "github").
+    // Grammar results for these (Wikipedia about YouTube, NASA, Nature…) are
+    // almost always irrelevant — the user wants to navigate, not research.
+    // Return empty so the UI shows only navigational suggestions.
+    {
+        const bool single_token = (query.find(' ') == std::string::npos);
+        const bool has_question = (query.find('?') != std::string::npos)
+                                || (query.rfind("who ", 0) == 0)
+                                || (query.rfind("what ", 0) == 0)
+                                || (query.rfind("how ", 0) == 0)
+                                || (query.rfind("when ", 0) == 0)
+                                || (query.rfind("where ", 0) == 0)
+                                || (query.rfind("why ", 0) == 0);
+        const bool has_space    = (query.find(' ') != std::string::npos);
+
+        // Single-token without question words or spaces = navigational intent.
+        // Exception: if it's 3+ words it's a real search query.
+        if (single_token && !has_question && query.size() >= 2) {
+            return {};   // no grammar results for navigational queries
+        }
+        (void)has_space;
+    }
+
     std::vector<GrammarResult> candidates;
     candidates.reserve(grammars_.size());
 

@@ -367,11 +367,20 @@ final class BrowserModel: ObservableObject {
 // MARK: - HTML extraction helpers
 
 private func extractTitle(_ html: String) -> String? {
+    // Try <title> first, then <h1>
+    if let t = extractTagContent(html, tag: "title"), !t.isEmpty { return t }
+    if let t = extractTagContent(html, tag: "h1"),    !t.isEmpty { return t }
+    return nil
+}
+
+private func extractTagContent(_ html: String, tag: String) -> String? {
     let lower = html.lowercased()
-    guard let ts = lower.range(of: "<title"),
-          let te = lower.range(of: "</title>") else { return nil }
-    let start = html.index(ts.upperBound, offsetBy: 0)
-    guard let gt = html[start...].firstIndex(of: ">") else { return nil }
+    let open  = "<\(tag)"
+    let close = "</\(tag)>"
+    guard let ts = lower.range(of: open),
+          let te = lower.range(of: close) else { return nil }
+    let after = html[ts.upperBound...]
+    guard let gt = after.firstIndex(of: ">") else { return nil }
     let content = String(html[html.index(after: gt)..<te.lowerBound])
     return content
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -380,22 +389,65 @@ private func extractTitle(_ html: String) -> String? {
 }
 
 private func extractText(_ html: String) -> String {
+    // Extract text from <p> tags — real prose, not navigation menus.
+    var paragraphs: [String] = []
+    var cursor = html.startIndex
+
+    while cursor < html.endIndex {
+        // Find next <p ...>
+        guard let pStart = html.range(of: "<p", options: .caseInsensitive, range: cursor..<html.endIndex)
+        else { break }
+        // Find closing >
+        guard let gtRange = html.range(of: ">", range: pStart.upperBound..<html.endIndex)
+        else { break }
+        let bodyStart = gtRange.upperBound
+        // Find </p>
+        guard let pEnd = html.range(of: "</p>", options: .caseInsensitive, range: bodyStart..<html.endIndex)
+        else { break }
+
+        let raw   = String(html[bodyStart..<pEnd.lowerBound])
+        let clean = stripTags(raw)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        if clean.count > 40 && clean.contains(" ") {
+            paragraphs.append(clean)
+        }
+        cursor = pEnd.upperBound
+    }
+
+    if !paragraphs.isEmpty {
+        return paragraphs.prefix(4).joined(separator: " ")
+    }
+
+    // Fallback: strip boilerplate tags then all tags
+    return stripTags(removeBoilerplateTags(html))
+        .components(separatedBy: .whitespacesAndNewlines)
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+}
+
+private func stripTags(_ html: String) -> String {
+    var out = ""
+    var inTag = false
+    for c in html {
+        if c == "<" { inTag = true }
+        else if c == ">" { inTag = false; out += " " }
+        else if !inTag { out.append(c) }
+    }
+    return out
+}
+
+private func removeBoilerplateTags(_ html: String) -> String {
     var result = html
-    for tag in ["script", "style", "head", "nav", "footer"] {
+    for tag in ["script", "style", "head", "nav", "footer", "header", "aside", "form"] {
         while let s = result.range(of: "<\(tag)", options: .caseInsensitive),
               let e = result.range(of: "</\(tag)>", options: .caseInsensitive,
                                    range: s.lowerBound..<result.endIndex) {
             result.removeSubrange(s.lowerBound...e.upperBound)
         }
     }
-    var out = ""
-    var inTag = false
-    for c in result {
-        if c == "<" { inTag = true }
-        else if c == ">" { inTag = false; out += " " }
-        else if !inTag { out.append(c) }
-    }
-    return out.components(separatedBy: .whitespacesAndNewlines)
-              .filter { !$0.isEmpty }
-              .joined(separator: " ")
+    return result
 }
