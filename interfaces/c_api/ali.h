@@ -154,7 +154,35 @@ AliStatus ali_update_device_conditions(AliEngine* engine,
                                         int        memory_pressure,
                                         uint64_t   free_storage_bytes);
 
-/* ── Statistics ──────────────────────────────────────────────────────────── */
+/* ── Grammar-guided discovery ────────────────────────────────────────────── */
+
+/** Opaque array of grammar construction results. */
+typedef struct AliGrammarResult_ AliGrammarResult;
+
+/**
+ * Construct candidate URLs from the Grammar Registry for a query.
+ * Results are sorted by authority descending.
+ *
+ * @param query       Raw query string.
+ * @param max_results Maximum number of results (1–20).
+ * @param out_results Receives the result array; free with ali_grammar_results_free().
+ * @param out_count   Receives the result count.
+ */
+AliStatus ali_grammar_construct(AliEngine*         engine,
+                                 const char*        query,
+                                 uint32_t           max_results,
+                                 AliGrammarResult** out_results,
+                                 uint32_t*          out_count);
+
+/** Access one grammar result by zero-based index. */
+AliStatus ali_grammar_result_get(const AliGrammarResult* results,
+                                  uint32_t                index,
+                                  const char**            out_grammar_name,
+                                  const char**            out_url,
+                                  const char**            out_domain,
+                                  float*                  out_confidence);
+
+void ali_grammar_results_free(AliGrammarResult* results);
 
 AliStatus ali_stats_doc_count(AliEngine* engine, uint64_t* out_count);
 AliStatus ali_stats_segment_count(AliEngine* engine, uint32_t* out_count);

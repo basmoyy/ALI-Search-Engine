@@ -331,7 +331,8 @@ AliStatus ali_update_device_conditions(AliEngine* engine,
         cond.network_available  = (network_available  != 0);
         cond.network_metered    = (network_metered    != 0);
         cond.charging           = (charging           != 0);
-        cond.battery_level_pct  = battery_level_pct;
+        cond.battery_level_pct  = static_cast<uint8_t>(
+            std::max(0, std::min(100, battery_level_pct)));
         cond.thermal_throttling = (thermal_throttling != 0);
         cond.memory_pressure    = (memory_pressure    != 0);
         cond.free_storage_bytes = free_storage_bytes;
@@ -383,4 +384,49 @@ AliStatus ali_stats_grammar_count(AliEngine* engine, uint32_t* out_count) {
     if (!engine || !out_count) return ALI_ERR_INVALID_ARG;
     *out_count = engine->grammar_registry.size();
     return ALI_OK;
+}
+
+// ─── Grammar-guided discovery ─────────────────────────────────────────────────
+
+struct AliGrammarResult_ {
+    std::vector<ali::GrammarResult> items;
+};
+
+AliStatus ali_grammar_construct(AliEngine*         engine,
+                                 const char*        query,
+                                 uint32_t           max_results,
+                                 AliGrammarResult** out_results,
+                                 uint32_t*          out_count) {
+    if (!engine || !query || !out_results || !out_count) return ALI_ERR_INVALID_ARG;
+    if (max_results == 0 || max_results > 20) max_results = 5;
+    try {
+        auto items = engine->grammar_registry.construct(
+            std::string(query), max_results);
+        auto* r = new AliGrammarResult_();
+        r->items = std::move(items);
+        *out_results = r;
+        *out_count   = static_cast<uint32_t>(r->items.size());
+        return ALI_OK;
+    } catch (...) {
+        return translate_exception();
+    }
+}
+
+AliStatus ali_grammar_result_get(const AliGrammarResult* results,
+                                  uint32_t                index,
+                                  const char**            out_grammar_name,
+                                  const char**            out_url,
+                                  const char**            out_domain,
+                                  float*                  out_confidence) {
+    if (!results || index >= results->items.size()) return ALI_ERR_INVALID_ARG;
+    const auto& r = results->items[index];
+    if (out_grammar_name) *out_grammar_name = r.grammar_name.c_str();
+    if (out_url)          *out_url          = r.url.c_str();
+    if (out_domain)       *out_domain       = r.domain.c_str();
+    if (out_confidence)   *out_confidence   = r.confidence;
+    return ALI_OK;
+}
+
+void ali_grammar_results_free(AliGrammarResult* results) {
+    delete results;
 }

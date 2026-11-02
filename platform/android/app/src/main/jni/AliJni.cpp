@@ -156,6 +156,8 @@ Java_com_ali_search_AliEngine_nativeSegmentCount(JNIEnv* env, jclass,
     return rc;
 }
 
+} // extern "C"
+
 JNIEXPORT jint JNICALL
 Java_com_ali_search_AliEngine_nativeIndexBytes(JNIEnv* env, jclass,
                                                 jlong handle, jlongArray out) {
@@ -164,6 +166,94 @@ Java_com_ali_search_AliEngine_nativeIndexBytes(JNIEnv* env, jclass,
     const jlong val = static_cast<jlong>(bytes);
     env->SetLongArrayRegion(out, 0, 1, &val);
     return rc;
+}
+
+// ── Discovery stats ───────────────────────────────────────────────────────────
+
+JNIEXPORT jint JNICALL
+Java_com_ali_search_AliEngine_nativeSourceCount(JNIEnv* env, jclass,
+                                                 jlong handle, jintArray out) {
+    uint32_t count = 0;
+    const jint rc = ali_stats_source_count(reinterpret_cast<AliEngine*>(handle), &count);
+    env->SetIntArrayRegion(out, 0, 1, reinterpret_cast<const jint*>(&count));
+    return rc;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_ali_search_AliEngine_nativeNavEdgeCount(JNIEnv* env, jclass,
+                                                  jlong handle, jintArray out) {
+    uint32_t count = 0;
+    const jint rc = ali_stats_nav_edge_count(reinterpret_cast<AliEngine*>(handle), &count);
+    env->SetIntArrayRegion(out, 0, 1, reinterpret_cast<const jint*>(&count));
+    return rc;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_ali_search_AliEngine_nativeGrammarCount(JNIEnv* env, jclass,
+                                                  jlong handle, jintArray out) {
+    uint32_t count = 0;
+    const jint rc = ali_stats_grammar_count(reinterpret_cast<AliEngine*>(handle), &count);
+    env->SetIntArrayRegion(out, 0, 1, reinterpret_cast<const jint*>(&count));
+    return rc;
+}
+
+// ── Grammar-guided search ─────────────────────────────────────────────────────
+// Returns up to maxResults grammar-constructed URLs as tab-separated:
+// "grammar_name\turl\tdomain\tconfidence"
+
+JNIEXPORT jobjectArray JNICALL
+Java_com_ali_search_AliEngine_nativeGrammarConstruct(JNIEnv* env, jclass,
+                                                      jlong handle,
+                                                      jstring query,
+                                                      jint maxResults) {
+    const char* q = env->GetStringUTFChars(query, nullptr);
+
+    uint32_t count = 0;
+    jclass strClass = env->FindClass("java/lang/String");
+    jobjectArray arr = nullptr;
+
+    // Use the grammar construct C API.
+    AliGrammarResult* results = nullptr;
+    ali_grammar_construct(reinterpret_cast<AliEngine*>(handle), q,
+                          static_cast<uint32_t>(maxResults), &results, &count);
+    env->ReleaseStringUTFChars(query, q);
+
+    arr = env->NewObjectArray(static_cast<jsize>(count), strClass, nullptr);
+    for (uint32_t i = 0; i < count; ++i) {
+        const char* name    = nullptr;
+        const char* url     = nullptr;
+        const char* domain  = nullptr;
+        float       conf    = 0.0f;
+        ali_grammar_result_get(results, i, &name, &url, &domain, &conf);
+        const std::string row =
+            std::string(name   ? name   : "") + '\t' +
+            std::string(url    ? url    : "") + '\t' +
+            std::string(domain ? domain : "") + '\t' +
+            std::to_string(conf);
+        env->SetObjectArrayElement(arr, static_cast<jsize>(i),
+                                   env->NewStringUTF(row.c_str()));
+    }
+    ali_grammar_results_free(results);
+    return arr;
+}
+
+// ── Enqueue seed URLs (bulk) ──────────────────────────────────────────────────
+
+JNIEXPORT jint JNICALL
+Java_com_ali_search_AliEngine_nativeEnqueueSeeds(JNIEnv* env, jclass,
+                                                  jlong handle,
+                                                  jobjectArray urlArray) {
+    AliEngine* engine = reinterpret_cast<AliEngine*>(handle);
+    const jsize n = env->GetArrayLength(urlArray);
+    int failures = 0;
+    for (jsize i = 0; i < n; ++i) {
+        auto jstr = reinterpret_cast<jstring>(env->GetObjectArrayElement(urlArray, i));
+        if (!jstr) continue;
+        const char* u = env->GetStringUTFChars(jstr, nullptr);
+        if (ali_crawler_enqueue_url(engine, u) != 0) ++failures;
+        env->ReleaseStringUTFChars(jstr, u);
+    }
+    return failures == 0 ? 0 : -1;
 }
 
 } // extern "C"

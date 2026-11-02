@@ -1,0 +1,4 @@
+module AliC {
+    header "../../../../interfaces/c_api/ali.h"
+    export *
+}

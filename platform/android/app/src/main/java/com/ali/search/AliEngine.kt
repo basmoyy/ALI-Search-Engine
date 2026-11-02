@@ -95,7 +95,7 @@ class AliEngine private constructor(private val handle: Long) {
 
     // ── Statistics ────────────────────────────────────────────────────────────
 
-    /** Total documents indexed since the engine was opened. */
+    /** Total documents indexed (TempIndex + persistent segments). */
     fun docCount(): Long {
         val out = LongArray(1)
         nativeDocCount(handle, out)
@@ -115,6 +115,61 @@ class AliEngine private constructor(private val handle: Long) {
         nativeIndexBytes(handle, out)
         return out[0]
     }
+
+    /** Number of domain-level sources tracked in the Source Registry. */
+    fun sourceCount(): Int {
+        val out = IntArray(1)
+        nativeSourceCount(handle, out)
+        return out[0]
+    }
+
+    /** Number of link/sitemap/citation edges in the Navigation Graph. */
+    fun navEdgeCount(): Int {
+        val out = IntArray(1)
+        nativeNavEdgeCount(handle, out)
+        return out[0]
+    }
+
+    /** Number of URL construction grammars loaded. */
+    fun grammarCount(): Int {
+        val out = IntArray(1)
+        nativeGrammarCount(handle, out)
+        return out[0]
+    }
+
+    // ── Grammar-guided discovery ──────────────────────────────────────────────
+
+    /**
+     * Construct candidate URLs from the Grammar Registry for [query].
+     * Returns up to [maxResults] results, each with a grammar name, URL,
+     * domain, and confidence score (0.0–1.0).
+     */
+    data class GrammarCandidate(
+        val grammarName: String,
+        val url:         String,
+        val domain:      String,
+        val confidence:  Float,
+    )
+
+    fun grammarConstruct(query: String, maxResults: Int = 5): List<GrammarCandidate> {
+        val raw: Array<String>? = nativeGrammarConstruct(handle, query, maxResults)
+        return raw?.mapNotNull { row ->
+            val p = row.split('\t', limit = 4)
+            if (p.size < 4) return@mapNotNull null
+            GrammarCandidate(
+                grammarName = p[0],
+                url         = p[1],
+                domain      = p[2],
+                confidence  = p[3].toFloatOrNull() ?: 0f,
+            )
+        } ?: emptyList()
+    }
+
+    /**
+     * Enqueue a list of seed URLs into the native crawler frontier (persisted in SQLite).
+     */
+    fun enqueueSeeds(urls: List<String>): Boolean =
+        nativeEnqueueSeeds(handle, urls.toTypedArray()) == 0
 
     /** Release native resources. Call from onDestroy or a coroutine scope cleanup. */
     fun close() {
@@ -162,5 +217,14 @@ class AliEngine private constructor(private val handle: Long) {
         @JvmStatic private external fun nativeDocCount(handle: Long, out: LongArray): Int
         @JvmStatic private external fun nativeSegmentCount(handle: Long, out: IntArray): Int
         @JvmStatic private external fun nativeIndexBytes(handle: Long, out: LongArray): Int
+        @JvmStatic private external fun nativeSourceCount(handle: Long, out: IntArray): Int
+        @JvmStatic private external fun nativeNavEdgeCount(handle: Long, out: IntArray): Int
+        @JvmStatic private external fun nativeGrammarCount(handle: Long, out: IntArray): Int
+        @JvmStatic private external fun nativeGrammarConstruct(
+            handle: Long, query: String, maxResults: Int
+        ): Array<String>?
+        @JvmStatic private external fun nativeEnqueueSeeds(
+            handle: Long, urls: Array<String>
+        ): Int
     }
 }
