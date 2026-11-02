@@ -1,12 +1,8 @@
 // BrowserModel.swift — Tab, history and bookmark state.
-// Swift 6 concurrency: engine is accessed only on bgQueue, so we
-// capture it directly to avoid @MainActor isolation warnings.
 
 import Foundation
 import Combine
 
-// Silence Swift 6 strict concurrency for DispatchQueue-based patterns.
-// AliEngine is internally locked (NSLock), so cross-actor access is safe.
 nonisolated(unsafe) private var _suppressWarning = false
 
 // MARK: - Tab
@@ -21,7 +17,6 @@ final class BrowserTab: ObservableObject, Identifiable {
     @Published var canGoForward = false
     @Published var loadProgress: Double = 0
 
-    // WebViewCoordinator uses this to receive commands from the model
     enum Command { case load(URL), goBack, goForward, reload, stopLoad }
     let commandSubject = PassthroughSubject<Command, Never>()
 
@@ -46,7 +41,7 @@ struct HistoryItem: Identifiable, Codable {
     init(url: String, title: String) {
         self.id        = UUID()
         self.url       = url
-        self.title     = title
+        self.title     = title.isEmpty ? url : title
         self.visitedAt = Date()
     }
 }
@@ -67,12 +62,23 @@ struct Bookmark: Identifiable, Codable {
     }
 }
 
-// MARK: - BrowserModel (central ViewModel)
+// MARK: - NavigationalResult
+// A directly-navigable suggestion (not a BM25 hit) shown at the top of results
+// when the query looks like a site name or known service.
+
+struct NavigationalResult: Identifiable {
+    let id        = UUID()
+    let label:    String   // e.g. "Go to youtube.com"
+    let url:      String
+    let subtitle: String   // e.g. "youtube.com"
+}
+
+// MARK: - BrowserModel
 
 @MainActor
 final class BrowserModel: ObservableObject {
 
-    // ── Tabs ──────────────────────────────────────────────────────────────────
+    // ── Tabs
     @Published var tabs: [BrowserTab] = []
     @Published var activeTabIndex: Int = 0
 
@@ -81,21 +87,22 @@ final class BrowserModel: ObservableObject {
         return tabs[activeTabIndex]
     }
 
-    // ── Search ────────────────────────────────────────────────────────────────
-    @Published var searchResults:  [SearchResult]   = []
-    @Published var grammarResults: [GrammarCandidate] = []
-    @Published var isSearching     = false
-    @Published var searchQuery     = ""
-    @Published var searchError:    String? = nil
+    // ── Search
+    @Published var searchResults:     [SearchResult]       = []
+    @Published var grammarResults:    [GrammarCandidate]   = []
+    @Published var navSuggestions:    [NavigationalResult] = []   // NEW: direct navigation
+    @Published var isSearching        = false
+    @Published var searchQuery        = ""
+    @Published var searchError:       String? = nil
 
-    // ── History & Bookmarks ───────────────────────────────────────────────────
+    // ── History & Bookmarks
     @Published var history:   [HistoryItem] = []
     @Published var bookmarks: [Bookmark]    = []
 
-    // ── Engine stats ──────────────────────────────────────────────────────────
+    // ── Engine stats
     @Published var stats = EngineStats()
 
-    // ── Engine ────────────────────────────────────────────────────────────────
+    // ── Engine
     private(set) var engine: AliEngine?
     private let bgQueue = DispatchQueue(label: "ali.engine", qos: .userInitiated)
     private var statsTimer: Timer?
@@ -112,7 +119,7 @@ final class BrowserModel: ObservableObject {
     private func openEngine() {
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let aliDir = support.appendingPathComponent("ALI")
+        let aliDir    = support.appendingPathComponent("ALI")
         let indexRoot = aliDir.appendingPathComponent("index").path
         let dbPath    = aliDir.appendingPathComponent("meta.db").path
         engine = AliEngine(indexRoot: indexRoot, dbPath: dbPath)
@@ -141,37 +148,21 @@ final class BrowserModel: ObservableObject {
         }
     }
 
-    // MARK: Navigation
+    // MARK: Navigation (URL only — does NOT trigger search)
 
-    func navigate(to rawURL: String) {
-        let url = canonicalURL(rawURL)
+    func navigate(to url: URL) {
         if let tab = activeTab { tab.load(url) }
         else { newTab(url: url) }
-    }
-
-    private func canonicalURL(_ raw: String) -> URL {
-        let t = raw.trimmingCharacters(in: .whitespaces)
-        if t.hasPrefix("http://") || t.hasPrefix("https://") {
-            return URL(string: t) ?? URL(string: "https://en.wikipedia.org/wiki/" +
-                                          t.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)!)!
-        }
-        if t.contains(".") && !t.contains(" ") {
-            return URL(string: "https://" + t) ?? URL(string: "about:blank")!
-        }
-        // Treat as a search query — open ALI search
-        searchQuery = t
-        performSearch(query: t)
-        return URL(string: "about:blank")!
     }
 
     // MARK: History
 
     func recordVisit(url: String, title: String) {
-        let item = HistoryItem(url: url, title: title.isEmpty ? url : title)
+        guard url != "about:blank" else { return }
+        let item = HistoryItem(url: url, title: title)
         history.insert(item, at: 0)
         if history.count > 1000 { history = Array(history.prefix(1000)) }
         savePersisted()
-        // Feed URL into ALI discovery
         bgQueue.async { [weak self] in
             self?.engine?.crawlerEnqueue(url: url)
         }
@@ -197,35 +188,95 @@ final class BrowserModel: ObservableObject {
     // MARK: Search
 
     func performSearch(query: String) {
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        isSearching = true
-        searchError = nil
-        searchResults = []
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return }
+        searchQuery    = q
+        isSearching    = true
+        searchError    = nil
+        searchResults  = []
         grammarResults = []
+        navSuggestions = buildNavSuggestions(for: q)   // immediate, no I/O
 
         bgQueue.async { [weak self] in
             guard let self, let engine = self.engine else { return }
 
-            // 1. Grammar candidates — immediate, no network needed
-            let grammar = engine.grammarConstruct(query: query, maxResults: 5)
-
-            // 2. Local BM25 search
-            let local = engine.search(query: query, topK: 15)
+            let grammar = engine.grammarConstruct(query: q, maxResults: 5)
+            let local   = engine.search(query: q, topK: 15)
 
             DispatchQueue.main.async {
                 self.grammarResults = grammar
                 self.searchResults  = local
                 self.isSearching    = false
 
-                // 3. If local results are sparse, trigger targeted discovery
                 if local.count < 3 && !grammar.isEmpty {
-                    self.discoverForQuery(query: query, candidates: grammar)
+                    self.discoverForQuery(query: q, candidates: grammar)
                 }
             }
         }
     }
 
-    /// Fetch grammar-constructed pages, index them, then refresh results.
+    // MARK: Navigational suggestions
+
+    /// Generates instant "Go to X" suggestions for site-name-like queries.
+    /// These appear above grammar results so the user can go directly to
+    /// the site they typed without waiting for BM25 index results.
+    private func buildNavSuggestions(for query: String) -> [NavigationalResult] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        var results: [NavigationalResult] = []
+
+        // If the query is a single word (no spaces) or contains a dot → treat as
+        // a potential site name and offer direct navigation.
+        let isLikelySite = !q.contains(" ") || q.contains(".")
+
+        if isLikelySite {
+            // Clean up: drop protocol if present
+            let bare = q
+                .replacingOccurrences(of: "https://", with: "")
+                .replacingOccurrences(of: "http://",  with: "")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+
+            // If already has a TLD, use directly
+            if bare.contains(".") {
+                let url = "https://\(bare)"
+                results.append(NavigationalResult(
+                    label:    "Go to \(bare)",
+                    url:      url,
+                    subtitle: bare
+                ))
+            } else {
+                // Guess common TLDs
+                let https = "https://\(bare).com"
+                results.append(NavigationalResult(
+                    label:    "Go to \(bare).com",
+                    url:      https,
+                    subtitle: "\(bare).com"
+                ))
+                // Well-known non-.com sites
+                let knownOrg  = ["wikipedia", "archive", "mozilla", "gnome", "kde"]
+                let knownIo   = ["github"]
+                let knownNet  = ["speedtest", "iana"]
+                if knownOrg.contains(bare) {
+                    results.append(NavigationalResult(
+                        label: "Go to \(bare).org", url: "https://\(bare).org",
+                        subtitle: "\(bare).org"))
+                }
+                if knownIo.contains(bare) {
+                    results.append(NavigationalResult(
+                        label: "Go to \(bare).io", url: "https://\(bare).io",
+                        subtitle: "\(bare).io"))
+                }
+                if knownNet.contains(bare) {
+                    results.append(NavigationalResult(
+                        label: "Go to \(bare).net", url: "https://\(bare).net",
+                        subtitle: "\(bare).net"))
+                }
+            }
+        }
+        return results
+    }
+
+    // MARK: Background discovery
+
     private func discoverForQuery(query: String, candidates: [GrammarCandidate]) {
         bgQueue.async { [weak self] in
             guard let self, let engine = self.engine else { return }
@@ -234,14 +285,13 @@ final class BrowserModel: ObservableObject {
                 guard !candidate.url.isEmpty,
                       let url = URL(string: candidate.url) else { continue }
 
-                // Lightweight HTTP fetch using URLSession (synchronous via semaphore)
                 let sem = DispatchSemaphore(value: 0)
                 var body = Data()
                 var finalURL = candidate.url
 
                 var req = URLRequest(url: url)
                 req.timeoutInterval = 8
-                req.setValue("ALIBot/1.0", forHTTPHeaderField: "User-Agent")
+                req.setValue("ALIBot/1.0 (local search; contact: local)", forHTTPHeaderField: "User-Agent")
 
                 URLSession.shared.dataTask(with: req) { data, resp, _ in
                     if let data { body = data }
@@ -256,16 +306,14 @@ final class BrowserModel: ObservableObject {
                                ?? String(data: body, encoding: .isoLatin1)
                 else { continue }
 
-                // Extract title and body text (simple heuristic extraction)
-                let title   = extractTitle(html) ?? candidate.grammarName
-                let text    = extractText(html)
+                let title = extractTitle(html) ?? candidate.grammarName
+                let text  = extractText(html)
                 if text.count > 100 {
                     _ = engine.indexDocument(url: finalURL, title: title, body: text)
                 }
             }
             _ = engine.flush()
 
-            // Re-run search with newly indexed content
             let fresh = engine.search(query: query, topK: 15)
             DispatchQueue.main.async { [weak self] in
                 if !fresh.isEmpty { self?.searchResults = fresh }
@@ -303,7 +351,7 @@ final class BrowserModel: ObservableObject {
 
     func savePersisted() {
         let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
-        if let data = try? enc.encode(history) { try? data.write(to: historyURL) }
+        if let data = try? enc.encode(history)   { try? data.write(to: historyURL) }
         if let data = try? enc.encode(bookmarks) { try? data.write(to: bookmarksURL) }
     }
 
@@ -312,28 +360,27 @@ final class BrowserModel: ObservableObject {
         if let data = try? Data(contentsOf: historyURL),
            let h    = try? dec.decode([HistoryItem].self, from: data) { history = h }
         if let data = try? Data(contentsOf: bookmarksURL),
-           let b    = try? dec.decode([Bookmark].self, from: data) { bookmarks = b }
+           let b    = try? dec.decode([Bookmark].self, from: data)    { bookmarks = b }
     }
 }
 
-// MARK: - Simple HTML extraction helpers
+// MARK: - HTML extraction helpers
 
 private func extractTitle(_ html: String) -> String? {
     let lower = html.lowercased()
     guard let ts = lower.range(of: "<title"),
           let te = lower.range(of: "</title>") else { return nil }
     let start = html.index(ts.upperBound, offsetBy: 0)
-    // skip to ">"
     guard let gt = html[start...].firstIndex(of: ">") else { return nil }
     let content = String(html[html.index(after: gt)..<te.lowerBound])
-    return content.trimmingCharacters(in: .whitespacesAndNewlines)
-                  .replacingOccurrences(of: "\n", with: " ")
-                  .prefix(200).description
+    return content
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "\n", with: " ")
+        .prefix(200).description
 }
 
 private func extractText(_ html: String) -> String {
     var result = html
-    // Remove scripts, styles, heads
     for tag in ["script", "style", "head", "nav", "footer"] {
         while let s = result.range(of: "<\(tag)", options: .caseInsensitive),
               let e = result.range(of: "</\(tag)>", options: .caseInsensitive,
@@ -341,7 +388,6 @@ private func extractText(_ html: String) -> String {
             result.removeSubrange(s.lowerBound...e.upperBound)
         }
     }
-    // Strip tags
     var out = ""
     var inTag = false
     for c in result {
@@ -349,7 +395,6 @@ private func extractText(_ html: String) -> String {
         else if c == ">" { inTag = false; out += " " }
         else if !inTag { out.append(c) }
     }
-    // Collapse whitespace
     return out.components(separatedBy: .whitespacesAndNewlines)
               .filter { !$0.isEmpty }
               .joined(separator: " ")

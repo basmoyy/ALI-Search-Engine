@@ -12,26 +12,24 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // ── Tab bar ───────────────────────────────────────────────────────
             TabBarView(model: model)
-
             Divider()
-
-            // ── Toolbar ───────────────────────────────────────────────────────
             ToolbarView(
-                model:           model,
-                addressBarText:  $addressBarText,
-                showSearch:      $showSearch,
-                showHistory:     $showHistory,
-                showBookmarks:   $showBookmarks,
-                showStats:       $showStats
+                model:          model,
+                addressBarText: $addressBarText,
+                showSearch:     $showSearch,
+                showHistory:    $showHistory,
+                showBookmarks:  $showBookmarks,
+                showStats:      $showStats
             )
-
             Divider()
 
-            // ── Main content area ─────────────────────────────────────────────
             if showSearch {
-                SearchResultsView(model: model, addressBarText: $addressBarText, showSearch: $showSearch)
+                SearchResultsView(
+                    model:           model,
+                    addressBarText:  $addressBarText,
+                    showSearch:      $showSearch
+                )
             } else if let tab = model.activeTab {
                 BrowserPane(tab: tab, model: model)
             }
@@ -41,15 +39,15 @@ struct ContentView: View {
         .sheet(isPresented: $showStats)     { StatsView(model: model) }
         .frame(minWidth: 900, minHeight: 600)
         .background(Color(NSColor.windowBackgroundColor))
-        .onAppear {
-            // Sync address bar with active tab URL
-        }
         .onChange(of: model.activeTabIndex) { _ in syncAddressBar() }
         .onChange(of: model.activeTab?.url) { _ in syncAddressBar() }
     }
 
     private func syncAddressBar() {
-        addressBarText = model.activeTab?.url?.absoluteString ?? ""
+        // Don't overwrite the bar if we're showing search results
+        if !showSearch {
+            addressBarText = model.activeTab?.url?.absoluteString ?? ""
+        }
     }
 }
 
@@ -68,7 +66,6 @@ struct TabBarView: View {
                         model.closeTab(id: tab.id)
                     }
                 }
-                // New tab button
                 Button(action: { model.newTab() }) {
                     Image(systemName: "plus")
                         .font(.system(size: 11, weight: .medium))
@@ -85,7 +82,7 @@ struct TabBarView: View {
 }
 
 struct TabCell: View {
-    @ObservedObject var tab:    BrowserTab
+    @ObservedObject var tab: BrowserTab
     let isActive: Bool
     let onSelect: () -> Void
     let onClose:  () -> Void
@@ -99,15 +96,15 @@ struct TabCell: View {
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
-            Text(tab.title.prefix(20))
+            Text(tab.title.prefix(22))
                 .font(.system(size: 12))
                 .lineLimit(1)
-                .frame(maxWidth: 140, alignment: .leading)
+                .frame(maxWidth: 150, alignment: .leading)
             Button(action: onClose) {
                 Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
             }
             .buttonStyle(.plain)
-            .opacity(0.6)
+            .opacity(0.5)
         }
         .padding(.horizontal, 10)
         .frame(height: 30)
@@ -125,92 +122,108 @@ struct TabCell: View {
 // MARK: - Toolbar
 
 struct ToolbarView: View {
-    @ObservedObject var model:          BrowserModel
-    @Binding var addressBarText:        String
-    @Binding var showSearch:            Bool
-    @Binding var showHistory:           Bool
-    @Binding var showBookmarks:         Bool
-    @Binding var showStats:             Bool
+    @ObservedObject var model: BrowserModel
+    @Binding var addressBarText: String
+    @Binding var showSearch:     Bool
+    @Binding var showHistory:    Bool
+    @Binding var showBookmarks:  Bool
+    @Binding var showStats:      Bool
 
     var body: some View {
         HStack(spacing: 6) {
-            // Back / Forward / Reload
-            Button(action: { model.activeTab?.goBack() }) {
+            // Back
+            Button { model.activeTab?.goBack() } label: {
                 Image(systemName: "chevron.left")
             }
             .disabled(!(model.activeTab?.canGoBack ?? false))
             .keyboardShortcut("[", modifiers: .command)
 
-            Button(action: { model.activeTab?.goForward() }) {
+            // Forward
+            Button { model.activeTab?.goForward() } label: {
                 Image(systemName: "chevron.right")
             }
             .disabled(!(model.activeTab?.canGoForward ?? false))
             .keyboardShortcut("]", modifiers: .command)
 
-            Button(action: {
+            // Reload / Stop
+            Button {
                 if model.activeTab?.isLoading == true { model.activeTab?.stopLoad() }
                 else { model.activeTab?.reload() }
-            }) {
-                Image(systemName: model.activeTab?.isLoading == true ? "xmark" : "arrow.clockwise")
+            } label: {
+                Image(systemName: model.activeTab?.isLoading == true
+                      ? "xmark" : "arrow.clockwise")
             }
             .keyboardShortcut("r", modifiers: .command)
 
             // Address / search bar
             AddressBar(
-                text:       $addressBarText,
-                isLoading:  model.activeTab?.isLoading ?? false,
-                progress:   model.activeTab?.loadProgress ?? 0
+                text:      $addressBarText,
+                isLoading: model.activeTab?.isLoading ?? false,
+                progress:  model.activeTab?.loadProgress ?? 0
             ) { submitted in
-                handleInput(submitted)
+                // FIX: single, clear decision — called exactly once on Enter
+                commitInput(submitted)
             }
 
-            // Bookmark toggle
-            Button(action: {
-                guard let url = model.activeTab?.url?.absoluteString,
+            // Bookmark star
+            Button {
+                guard let url   = model.activeTab?.url?.absoluteString,
                       let title = model.activeTab?.title else { return }
                 if model.isBookmarked(url: url) {
-                    model.removeBookmark(id: model.bookmarks.first(where: { $0.url == url })!.id)
+                    if let bm = model.bookmarks.first(where: { $0.url == url }) {
+                        model.removeBookmark(id: bm.id)
+                    }
                 } else {
                     model.addBookmark(url: url, title: title)
                 }
-            }) {
-                Image(systemName: model.isBookmarked(url: model.activeTab?.url?.absoluteString ?? "")
-                      ? "star.fill" : "star")
-                    .foregroundColor(model.isBookmarked(url: model.activeTab?.url?.absoluteString ?? "")
-                                     ? .yellow : .secondary)
+            } label: {
+                let url = model.activeTab?.url?.absoluteString ?? ""
+                Image(systemName: model.isBookmarked(url: url) ? "star.fill" : "star")
+                    .foregroundColor(model.isBookmarked(url: url) ? .yellow : .secondary)
             }
 
-            // Panel toggles
-            Button(action: { showHistory.toggle() }) {
-                Image(systemName: "clock")
-            }
-            Button(action: { showBookmarks.toggle() }) {
-                Image(systemName: "bookmark")
-            }
-            Button(action: { showStats.toggle() }) {
-                Image(systemName: "chart.bar")
-            }
+            Button { showHistory.toggle()   } label: { Image(systemName: "clock") }
+            Button { showBookmarks.toggle() } label: { Image(systemName: "bookmark") }
+            Button { showStats.toggle()     } label: { Image(systemName: "chart.bar") }
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
     }
 
-    private func handleInput(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
+    /// The single entry point for address-bar input. Called exactly once per Enter.
+    private func commitInput(_ raw: String) {
+        let text = raw.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
 
-        // Check if it looks like a URL
-        if trimmed.contains(".") && !trimmed.contains(" ") {
-            showSearch = false
-            model.navigate(to: trimmed)
-        } else {
-            // Search query
-            showSearch = true
-            model.searchQuery = trimmed
-            model.performSearch(query: trimmed)
+        // 1. Explicit URL or domain name → navigate directly, never search
+        if looksLikeURL(text) {
+            let url = text.hasPrefix("http") ? text : "https://\(text)"
+            if let u = URL(string: url) {
+                showSearch = false
+                addressBarText = url
+                model.navigate(to: u)
+            }
+            return
         }
-        addressBarText = trimmed
+
+        // 2. Everything else → search (single call here, nowhere else)
+        showSearch = true
+        addressBarText = text
+        model.performSearch(query: text)
+    }
+
+    /// Returns true if the input should be treated as a URL rather than a search query.
+    private func looksLikeURL(_ s: String) -> Bool {
+        if s.hasPrefix("http://") || s.hasPrefix("https://") { return true }
+        // Single token (no spaces) with a dot not at the start/end
+        if !s.contains(" ") {
+            let parts = s.components(separatedBy: ".")
+            if parts.count >= 2 && parts.first!.count > 0 && parts.last!.count > 0 {
+                return true
+            }
+        }
+        return false
     }
 }
 
@@ -220,19 +233,19 @@ struct AddressBar: View {
     @Binding var text:  String
     let isLoading:      Bool
     let progress:       Double
-    let onSubmit:       (String) -> Void
+    let onSubmit:       (String) -> Void   // called exactly once, by .onSubmit
 
     @FocusState private var focused: Bool
 
     var body: some View {
         ZStack(alignment: .leading) {
-            // Progress background
+            // Load progress tint
             GeometryReader { geo in
                 if isLoading && progress > 0 && progress < 1 {
                     Rectangle()
-                        .fill(Color.accentColor.opacity(0.15))
+                        .fill(Color.accentColor.opacity(0.12))
                         .frame(width: geo.size.width * progress)
-                        .animation(.easeInOut(duration: 0.3), value: progress)
+                        .animation(.easeInOut(duration: 0.25), value: progress)
                 }
             }
             .cornerRadius(6)
@@ -241,8 +254,15 @@ struct AddressBar: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .padding(.horizontal, 8)
-                .onSubmit { onSubmit(text) }
+                .onSubmit {
+                    // This is the ONLY place onSubmit is called.
+                    onSubmit(text)
+                }
                 .focused($focused)
+                .onExitCommand {
+                    // Esc clears focus without submitting
+                    focused = false
+                }
         }
         .frame(height: 28)
         .background(
@@ -267,12 +287,10 @@ struct BrowserPane: View {
         ZStack(alignment: .top) {
             WebViewRepresentable(tab: tab, model: model)
                 .ignoresSafeArea()
-
             if tab.isLoading {
                 ProgressView(value: tab.loadProgress)
                     .progressViewStyle(.linear)
                     .frame(height: 2)
-                    .padding(.horizontal, 0)
             }
         }
     }
@@ -289,66 +307,114 @@ struct SearchResultsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
 
-                // Grammar-guided discovery candidates
-                if !model.grammarResults.isEmpty {
-                    SectionHeader(title: "Discovery — authoritative sources")
-                    ForEach(model.grammarResults) { g in
-                        GrammarCandidateRow(candidate: g) {
-                            open(url: g.url)
-                        }
+                // ── 1. Direct navigation suggestions (top priority) ───────────
+                // These appear immediately, before any I/O, so the user can go
+                // straight to the site they typed.
+                if !model.navSuggestions.isEmpty {
+                    SectionHeader(title: "Navigate to")
+                    ForEach(model.navSuggestions) { nav in
+                        NavigationalRow(nav: nav) { open(url: nav.url) }
                     }
-                    Divider().padding(.vertical, 8)
+                    Divider().padding(.vertical, 6)
                 }
 
-                // Local BM25 results
+                // ── 2. Grammar-guided discovery candidates ────────────────────
+                if !model.grammarResults.isEmpty {
+                    SectionHeader(title: "Relevant sources")
+                    ForEach(model.grammarResults) { g in
+                        GrammarCandidateRow(candidate: g) { open(url: g.url) }
+                    }
+                    Divider().padding(.vertical, 6)
+                }
+
+                // ── 3. Local BM25 index results ───────────────────────────────
                 if model.isSearching {
-                    HStack {
-                        ProgressView()
-                        Text("Searching local index…")
+                    HStack(spacing: 8) {
+                        ProgressView().scaleEffect(0.7)
+                        Text("Searching…")
                             .font(.system(size: 13))
                             .foregroundColor(.secondary)
                     }
-                    .padding()
-                } else if model.searchResults.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.largeTitle).foregroundColor(.secondary)
-                        Text("No local results for \"\(model.searchQuery)\"")
-                            .font(.system(size: 14)).foregroundColor(.secondary)
-                        Text("Discovery is running — results will appear as pages are indexed.")
-                            .font(.system(size: 12)).foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(32)
-                } else {
-                    SectionHeader(title: "Results from local index (\(model.searchResults.count))")
+                    .padding(12)
+                } else if !model.searchResults.isEmpty {
+                    SectionHeader(title: "From local index (\(model.searchResults.count))")
                     ForEach(model.searchResults) { r in
                         SearchResultRow(result: r) { open(url: r.url) }
                     }
+                } else if model.navSuggestions.isEmpty && model.grammarResults.isEmpty {
+                    emptyState
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 12)
+            .padding(.top, 8)
         }
         .background(Color(NSColor.windowBackgroundColor))
     }
 
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 36)).foregroundColor(.secondary)
+            Text("No results for \"\(model.searchQuery)\"")
+                .font(.system(size: 14)).foregroundColor(.secondary)
+            Text("ALI is discovering relevant pages in the background.")
+                .font(.system(size: 12)).foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(40)
+    }
+
     private func open(url: String) {
         guard let u = URL(string: url) else { return }
-        showSearch = false
+        showSearch     = false
         addressBarText = url
-        model.newTab(url: u)
+        model.navigate(to: u)
     }
 }
+
+// MARK: - Result rows
 
 struct SectionHeader: View {
     let title: String
     var body: some View {
-        Text(title)
-            .font(.system(size: 11, weight: .semibold))
+        Text(title.uppercased())
+            .font(.system(size: 10, weight: .semibold))
             .foregroundColor(.secondary)
+            .tracking(0.5)
+            .padding(.top, 10)
             .padding(.bottom, 4)
-            .padding(.top, 8)
+    }
+}
+
+struct NavigationalRow: View {
+    let nav:    NavigationalResult
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 12) {
+                Image(systemName: "arrow.right.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(nav.label)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.primary)
+                    Text(nav.subtitle)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(Divider().opacity(0.3), alignment: .bottom)
     }
 }
 
@@ -369,7 +435,7 @@ struct SearchResultRow: View {
             if !result.excerpt.isEmpty {
                 Text(result.excerpt)
                     .font(.system(size: 12))
-                    .foregroundColor(.primary)
+                    .foregroundColor(.primary.opacity(0.85))
                     .lineLimit(2)
             }
         }
@@ -377,7 +443,7 @@ struct SearchResultRow: View {
         .padding(.horizontal, 4)
         .contentShape(Rectangle())
         .onTapGesture { onOpen() }
-        .overlay(Divider().opacity(0.4), alignment: .bottom)
+        .overlay(Divider().opacity(0.3), alignment: .bottom)
     }
 }
 
@@ -386,13 +452,13 @@ struct GrammarCandidateRow: View {
     let onOpen: () -> Void
 
     var body: some View {
-        HStack {
+        HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(candidate.grammarName)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.accentColor)
-                    Text("•")
+                    Text("·")
                         .foregroundColor(.secondary)
                     Text(candidate.domain)
                         .font(.system(size: 11))
@@ -404,17 +470,14 @@ struct GrammarCandidateRow: View {
                     .lineLimit(1)
             }
             Spacer()
-            Text("\(Int(candidate.confidence * 100))%")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.secondary)
             Button("Open") { onOpen() }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 7)
         .contentShape(Rectangle())
         .onTapGesture { onOpen() }
-        .overlay(Divider().opacity(0.3), alignment: .bottom)
+        .overlay(Divider().opacity(0.25), alignment: .bottom)
     }
 }
 
@@ -445,7 +508,7 @@ struct HistoryView: View {
             }
             .navigationTitle("History")
             .toolbar {
-                ToolbarItem { Button("Done") { dismiss() } }
+                ToolbarItem { Button("Done")  { dismiss() } }
                 ToolbarItem { Button("Clear") { model.history = []; model.savePersisted() } }
             }
         }
@@ -477,7 +540,7 @@ struct BookmarksView: View {
                         Spacer()
                         Button("Open") {
                             addressBarText = bm.url
-                            model.newTab(url: URL(string: bm.url)!)
+                            if let u = URL(string: bm.url) { model.navigate(to: u) }
                             dismiss()
                         }
                         .buttonStyle(.bordered)
@@ -509,20 +572,21 @@ struct StatsView: View {
 
             Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 10) {
                 GridRow {
-                    stat("Documents indexed", value: "\(model.stats.docCount)")
-                    stat("Segments",           value: "\(model.stats.segmentCount)")
+                    stat("Documents indexed", "\(model.stats.docCount)")
+                    stat("Segments",          "\(model.stats.segmentCount)")
                 }
                 GridRow {
-                    stat("Index size",         value: ByteCountFormatter.string(fromByteCount: Int64(model.stats.indexBytes), countStyle: .file))
-                    stat("Sources tracked",    value: "\(model.stats.sourceCount)")
+                    stat("Index size", ByteCountFormatter.string(
+                        fromByteCount: Int64(model.stats.indexBytes), countStyle: .file))
+                    stat("Sources tracked", "\(model.stats.sourceCount)")
                 }
                 GridRow {
-                    stat("Nav edges",          value: "\(model.stats.navEdgeCount)")
-                    stat("Grammars loaded",    value: "\(model.stats.grammarCount)")
+                    stat("Nav edges",       "\(model.stats.navEdgeCount)")
+                    stat("Grammars loaded", "\(model.stats.grammarCount)")
                 }
                 GridRow {
-                    stat("History entries",    value: "\(model.history.count)")
-                    stat("Bookmarks",          value: "\(model.bookmarks.count)")
+                    stat("History entries", "\(model.history.count)")
+                    stat("Bookmarks",       "\(model.bookmarks.count)")
                 }
             }
 
@@ -531,22 +595,17 @@ struct StatsView: View {
             HStack {
                 Button("Refresh") { model.refreshStats() }
                 Spacer()
-                Button("Done")    { dismiss() }
-                    .buttonStyle(.borderedProminent)
+                Button("Done") { dismiss() }.buttonStyle(.borderedProminent)
             }
         }
         .padding(24)
         .frame(width: 380)
     }
 
-    private func stat(_ label: String, value: String) -> some View {
+    private func stat(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-            Text(value)
-                .font(.system(size: 15, weight: .semibold))
-                .monospacedDigit()
+            Text(label).font(.system(size: 11)).foregroundColor(.secondary)
+            Text(value).font(.system(size: 15, weight: .semibold)).monospacedDigit()
         }
     }
 }
