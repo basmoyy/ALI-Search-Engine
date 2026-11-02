@@ -12,6 +12,9 @@
 #include "ali/locality/locality_memory.h"
 #include "ali/crawler/crawler.h"
 #include "ali/crawler/resource_controller.h"
+#include "ali/discovery/source_registry.h"
+#include "ali/discovery/topic_nav_index.h"
+#include "ali/discovery/grammar_registry.h"
 
 #include <atomic>
 #include <cassert>
@@ -63,6 +66,11 @@ struct AliEngine_ {
     std::unique_ptr<ali::QueryPlanner>           planner;
     std::unique_ptr<MutableResourceController>   resource_ctrl;
     std::unique_ptr<ali::Crawler>                crawler;
+
+    // V1 discovery layer
+    std::unique_ptr<ali::SourceRegistry>         source_registry;
+    std::unique_ptr<ali::TopicNavIndex>          topic_nav;
+    ali::GrammarRegistry                         grammar_registry;
 
     std::atomic<bool> cancel_flag{false};
 };
@@ -117,6 +125,15 @@ AliStatus ali_engine_open(const char* index_root,
         ali::CrawlerConfig ccfg;
         engine->crawler = std::make_unique<ali::Crawler>(
             ccfg, *engine->db, *engine->writer, *engine->resource_ctrl);
+
+        // V1 discovery layer
+        engine->source_registry = std::make_unique<ali::SourceRegistry>(*engine->db);
+        (void)engine->source_registry->ensure_schema();
+
+        engine->topic_nav = std::make_unique<ali::TopicNavIndex>(*engine->db);
+        (void)engine->topic_nav->ensure_schema();
+
+        engine->grammar_registry.load_defaults();
 
         *out_engine = engine.release();
         return ALI_OK;
@@ -343,6 +360,27 @@ AliStatus ali_stats_segment_count(AliEngine* engine, uint32_t* out_count) {
 AliStatus ali_stats_index_bytes(AliEngine* engine, uint64_t* out_bytes) {
     if (!engine || !out_bytes) return ALI_ERR_INVALID_ARG;
     const auto snap = engine->manifest->snapshot();
-    *out_bytes = snap.total_size_bytes();
+    *out_bytes = snap.total_size_bytes()
+               + engine->writer->temp_index().used_bytes();
+    return ALI_OK;
+}
+
+// ─── Discovery stats ──────────────────────────────────────────────────────────
+
+AliStatus ali_stats_source_count(AliEngine* engine, uint32_t* out_count) {
+    if (!engine || !out_count) return ALI_ERR_INVALID_ARG;
+    *out_count = engine->source_registry ? engine->source_registry->total_count() : 0;
+    return ALI_OK;
+}
+
+AliStatus ali_stats_nav_edge_count(AliEngine* engine, uint32_t* out_count) {
+    if (!engine || !out_count) return ALI_ERR_INVALID_ARG;
+    *out_count = engine->topic_nav ? engine->topic_nav->edge_count() : 0;
+    return ALI_OK;
+}
+
+AliStatus ali_stats_grammar_count(AliEngine* engine, uint32_t* out_count) {
+    if (!engine || !out_count) return ALI_ERR_INVALID_ARG;
+    *out_count = engine->grammar_registry.size();
     return ALI_OK;
 }

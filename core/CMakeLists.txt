@@ -43,9 +43,14 @@ add_library(ali_core STATIC
   src/crawler/crawler.cpp
   src/crawler/resource_controller.cpp
 
-  # ── Index (Phase 4 navigation + Phase 10 compaction) ─────────────────────
+  # ── Index (Phase 4 navigation + Phase 10 compaction + TempIndex) ──────────
   src/index/compaction.cpp
   src/index/temp_index.cpp
+
+  # ── Discovery (SR + TNI/NG + Grammar Registry) ────────────────────────────
+  src/discovery/source_registry.cpp
+  src/discovery/topic_nav_index.cpp
+  src/discovery/grammar_registry.cpp
 )
 
 target_include_directories(ali_core

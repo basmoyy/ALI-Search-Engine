@@ -160,6 +160,15 @@ AliStatus ali_stats_doc_count(AliEngine* engine, uint64_t* out_count);
 AliStatus ali_stats_segment_count(AliEngine* engine, uint32_t* out_count);
 AliStatus ali_stats_index_bytes(AliEngine* engine, uint64_t* out_bytes);
 
+/** Number of domain-level sources tracked in the Source Registry. */
+AliStatus ali_stats_source_count(AliEngine* engine, uint32_t* out_count);
+
+/** Number of navigation edges in the Navigation Graph. */
+AliStatus ali_stats_nav_edge_count(AliEngine* engine, uint32_t* out_count);
+
+/** Number of URL grammars loaded in the Grammar Registry. */
+AliStatus ali_stats_grammar_count(AliEngine* engine, uint32_t* out_count);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

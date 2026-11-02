@@ -1,16 +1,13 @@
 package com.ali.search
 
 // AliScaffold.kt — Bottom navigation scaffold shared by all screens.
-//
-// Provides the persistent bottom nav bar (Search / Index / Benchmark)
-// and top app bar. All navigation is handled via NavController passed
-// down from MainActivity — no global singletons.
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -42,7 +39,12 @@ fun AliScaffold(
     content: @Composable (PaddingValues) -> Unit,
 ) {
     val backStack by navController.currentBackStackEntryAsState()
-    val current   = backStack?.destination?.route ?: "search"
+    val currentRoute = backStack?.destination?.route ?: "search"
+    // For nested browser routes, highlight search tab.
+    val activeTab = when {
+        currentRoute.startsWith("browser") -> "search"
+        else -> currentRoute
+    }
 
     Scaffold(
         topBar = {
@@ -52,9 +54,9 @@ fun AliScaffold(
             NavigationBar {
                 destinations.forEach { dest ->
                     NavigationBarItem(
-                        selected = current == dest.route,
+                        selected = activeTab == dest.route,
                         onClick  = {
-                            if (current != dest.route) {
+                            if (currentRoute != dest.route) {
                                 navController.navigate(dest.route) {
                                     popUpTo(navController.graph.startDestinationId) {
                                         saveState = true

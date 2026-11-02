@@ -23,6 +23,7 @@ add_executable(ali_unit_tests
   unit/test_deduplicator.cpp
   unit/test_url_frontier.cpp
   unit/test_fetcher.cpp
+  unit/test_discovery.cpp
 )
 
 target_link_libraries(ali_unit_tests

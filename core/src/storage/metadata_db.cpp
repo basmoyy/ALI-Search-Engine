@@ -8,6 +8,8 @@
 #include <sqlite3.h>
 
 #include <cassert>
+#include <cstdio>
+#include <functional>
 #include <stdexcept>
 
 namespace ali {
@@ -313,5 +315,47 @@ std::vector<UrlRecord> MetadataDb::pop_crawl_queue(uint32_t limit,
 bool MetadataDb::begin_transaction()    { return impl_->db && impl_->exec("BEGIN");    }
 bool MetadataDb::commit_transaction()   { return impl_->db && impl_->exec("COMMIT");   }
 bool MetadataDb::rollback_transaction() { return impl_->db && impl_->exec("ROLLBACK"); }
+
+// ── Generic helpers ────────────────────────────────────────────────────────────
+
+bool MetadataDb::exec_raw(const char* sql) {
+    return impl_->db && impl_->exec(sql);
+}
+
+bool MetadataDb::exec_bound(const char* sql,
+                              std::function<void(void*)> bind_fn) {
+    if (!impl_->db) return false;
+    sqlite3_stmt* stmt = nullptr;
+    if (!impl_->prepare(sql, &stmt)) return false;
+    bind_fn(static_cast<void*>(stmt));
+    const int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return (rc == SQLITE_DONE || rc == SQLITE_ROW);
+}
+
+void MetadataDb::exec_query(const char*                sql,
+                              std::function<void(void*)> bind_fn,
+                              std::function<void(void*)> row_fn) const {
+    if (!impl_->db) return;
+    sqlite3_stmt* stmt = nullptr;
+    if (!impl_->prepare(sql, &stmt)) return;
+    bind_fn(static_cast<void*>(stmt));
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+        row_fn(static_cast<void*>(stmt));
+    sqlite3_finalize(stmt);
+}
+
+uint32_t MetadataDb::count(const char* table_name) const {
+    if (!impl_->db) return 0;
+    char sql[128];
+    std::snprintf(sql, sizeof(sql), "SELECT COUNT(*) FROM %s", table_name);
+    sqlite3_stmt* stmt = nullptr;
+    if (!impl_->prepare(sql, &stmt)) return 0;
+    uint32_t n = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+        n = static_cast<uint32_t>(sqlite3_column_int64(stmt, 0));
+    sqlite3_finalize(stmt);
+    return n;
+}
 
 } // namespace ali

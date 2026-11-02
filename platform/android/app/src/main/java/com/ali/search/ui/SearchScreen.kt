@@ -2,11 +2,8 @@ package com.ali.search.ui
 
 // SearchScreen.kt — Local search interface.
 //
-// Phase 3: results show title, URL, excerpt, score and a tap-to-open link.
-// Works fully offline once content is indexed — no network needed for search.
+// Results open in ALI's built-in browser (BrowserScreen).
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,13 +17,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
 import com.ali.search.AliEngine
 import com.ali.search.AliViewModel
 
@@ -34,6 +31,7 @@ import com.ali.search.AliViewModel
 @Composable
 fun SearchScreen(
     padding: PaddingValues,
+    navController: NavController,
     vm: AliViewModel = viewModel(),
 ) {
     val state        by vm.search.collectAsStateWithLifecycle()
@@ -52,7 +50,7 @@ fun SearchScreen(
             value         = state.query,
             onValueChange = vm::onQueryChange,
             modifier      = Modifier.fillMaxWidth(),
-            placeholder   = { Text("Search local index…") },
+            placeholder   = { Text("Search…") },
             leadingIcon   = { Icon(Icons.Default.Search, contentDescription = null) },
             trailingIcon  = {
                 if (state.query.isNotEmpty()) {
@@ -76,7 +74,7 @@ fun SearchScreen(
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         } else if (state.query.isNotEmpty()) {
             Text(
-                text  = "${state.results.size} results · ${state.elapsedMs} ms (local index)",
+                text  = "${state.results.size} results · ${state.elapsedMs} ms",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -99,7 +97,11 @@ fun SearchScreen(
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.results, key = { it.url }) { result ->
-                    ResultCard(result)
+                    ResultCard(result) {
+                        // Open result in the in-app browser.
+                        val encoded = java.net.URLEncoder.encode(result.url, "UTF-8")
+                        navController.navigate("browser/$encoded")
+                    }
                 }
             }
         }
@@ -107,18 +109,14 @@ fun SearchScreen(
 }
 
 @Composable
-private fun ResultCard(result: AliEngine.Result) {
-    val context = LocalContext.current
+private fun ResultCard(
+    result:  AliEngine.Result,
+    onClick: () -> Unit,
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable {
-                // Phase 3: tap card to open the original page in the browser.
-                try {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(result.url))
-                    context.startActivity(intent)
-                } catch (_: Exception) {}
-            },
+            .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),

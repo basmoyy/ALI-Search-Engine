@@ -27,6 +27,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -137,6 +138,26 @@ public:
     [[nodiscard]] bool begin_transaction();
     [[nodiscard]] bool commit_transaction();
     [[nodiscard]] bool rollback_transaction();
+
+    // ── Generic helpers (for extension components like SourceRegistry) ───────
+    // These expose minimal SQLite access without leaking the raw handle.
+
+    /// Execute a DDL or multi-statement SQL string (no parameters).
+    [[nodiscard]] bool exec_raw(const char* sql);
+
+    /// Prepare, bind, step and finalise a single-statement DML.
+    /// bind_fn receives the raw sqlite3_stmt* as void*.
+    [[nodiscard]] bool exec_bound(const char* sql,
+                                   std::function<void(void*)> bind_fn);
+
+    /// Execute a query, calling row_fn once per result row.
+    /// row_fn receives the raw sqlite3_stmt* as void*.
+    void exec_query(const char*                sql,
+                    std::function<void(void*)> bind_fn,
+                    std::function<void(void*)> row_fn) const;
+
+    /// COUNT(*) on any table by name.
+    [[nodiscard]] uint32_t count(const char* table_name) const;
 
 private:
     struct Impl;

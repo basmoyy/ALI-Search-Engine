@@ -352,6 +352,21 @@ class AliViewModel(application: Application) : AndroidViewModel(application) {
         return out
     }
 
+    // ── Browser navigation feedback ───────────────────────────────────────────
+    // Called by BrowserScreen when a page finishes loading.
+    // Queues the URL for passive indexing so browsing builds the local index.
+
+    fun onBrowserNavigated(url: String) {
+        if (url.isBlank() || !url.startsWith("http")) return
+        val eng = engine ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                // Enqueue in the crawler's frontier for future discovery.
+                eng.crawlerEnqueue(url)
+            }
+        }
+    }
+
     // ── Clear index ───────────────────────────────────────────────────────────
 
     fun clearIndex() {
