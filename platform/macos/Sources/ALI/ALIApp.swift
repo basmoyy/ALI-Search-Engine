@@ -12,10 +12,21 @@ struct ALIApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Tab") {
-                    // Handled inside ContentView via keyboard shortcut
-                }
-                .keyboardShortcut("t", modifiers: .command)
+                Button("New Tab") { }         // handled by NSEvent monitor in ContentView
+                    .keyboardShortcut("t", modifiers: .command)
+                Button("Close Tab") { }
+                    .keyboardShortcut("w", modifiers: .command)
+            }
+            CommandGroup(after: .toolbar) {
+                Button("Focus Address Bar") { }
+                    .keyboardShortcut("l", modifiers: .command)
+                Divider()
+                Button("Back") { }
+                    .keyboardShortcut("[", modifiers: .command)
+                Button("Forward") { }
+                    .keyboardShortcut("]", modifiers: .command)
+                Button("Reload") { }
+                    .keyboardShortcut("r", modifiers: .command)
             }
         }
     }

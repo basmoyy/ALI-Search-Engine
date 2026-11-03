@@ -1,6 +1,11 @@
 // ContentView.swift — ALI browser and search interface.
 
 import SwiftUI
+import WebKit
+
+// MARK: - FocusField helper
+
+enum FocusField: Hashable { case addressBar }
 
 struct ContentView: View {
     @StateObject private var model = BrowserModel()
@@ -9,6 +14,7 @@ struct ContentView: View {
     @State private var showHistory   = false
     @State private var showBookmarks = false
     @State private var showStats     = false
+    @FocusState private var focusedField: FocusField?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,18 +26,19 @@ struct ContentView: View {
                 showSearch:     $showSearch,
                 showHistory:    $showHistory,
                 showBookmarks:  $showBookmarks,
-                showStats:      $showStats
+                showStats:      $showStats,
+                focusedField:   $focusedField
             )
             Divider()
+
             ZStack {
-                // Browser view — always present, hidden when search is shown
+                // Browser always present (keeps WKWebViews alive)
                 if let tab = model.activeTab {
                     BrowserPane(tab: tab, model: model)
                         .opacity(showSearch ? 0 : 1)
-                        // Keep it in the view hierarchy even during search
-                        // so the WKWebView doesn't get deallocated
+                        .allowsHitTesting(!showSearch)
                 }
-                // Search results overlay
+                // Search overlay
                 if showSearch {
                     SearchResultsView(
                         model:          model,
@@ -39,21 +46,26 @@ struct ContentView: View {
                         showSearch:     $showSearch
                     )
                 }
-                // Seeding progress banner
+                // Seeding banner (bottom right)
                 if model.isSeedingIndex {
                     VStack {
                         Spacer()
-                        HStack(spacing: 10) {
+                        HStack(spacing: 8) {
                             ProgressView()
-                            Text("Building initial index… \(Int(model.seedingProgress * 100))%")
-                                .font(.system(size: 12))
+                            Text(model.seedingStatus)
+                                .font(.system(size: 11))
                                 .foregroundColor(.secondary)
+                            ProgressView(value: model.seedingProgress)
+                                .frame(width: 80)
                         }
-                        .padding(10)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                         .background(.regularMaterial)
                         .cornerRadius(8)
-                        .padding(.bottom, 12)
+                        .padding(12)
                     }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .allowsHitTesting(false)
                 }
             }
         }
@@ -62,17 +74,65 @@ struct ContentView: View {
         .sheet(isPresented: $showStats)     { StatsView(model: model) }
         .frame(minWidth: 960, minHeight: 640)
         .background(Color(NSColor.windowBackgroundColor))
+        // ── Sync address bar with active tab ──────────────────────────────────
         .onChange(of: model.activeTabIndex) { _ in
             if !showSearch { syncAddressBar() }
         }
         .onChange(of: model.activeTab?.url) { _ in
             if !showSearch { syncAddressBar() }
         }
+        // ── Keyboard shortcuts ────────────────────────────────────────────────
+        .onAppear { setupKeyboardShortcuts() }
     }
 
     private func syncAddressBar() {
         let url = model.activeTab?.url?.absoluteString ?? ""
-        if url != "about:blank" { addressBarText = url }
+        if url != "about:blank" && !url.isEmpty { addressBarText = url }
+    }
+
+    private func setupKeyboardShortcuts() {
+        // NSEvent monitor for shortcuts that SwiftUI .keyboardShortcut can't capture
+        // when focus is inside a WKWebView.
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+            let cmd   = event.modifierFlags.contains(.command)
+            let shift = event.modifierFlags.contains(.shift)
+            let key   = event.charactersIgnoringModifiers ?? ""
+
+            if cmd {
+                switch key {
+                case "t":
+                    DispatchQueue.main.async { model.newTab(); showSearch = false; addressBarText = "" }
+                    return nil
+                case "w":
+                    DispatchQueue.main.async {
+                        if let tab = model.activeTab {
+                            model.closedTabURLs.append(contentsOf: [tab.url].compactMap { $0 })
+                            model.closeTab(id: tab.id)
+                        }
+                    }
+                    return nil
+                case "l":
+                    DispatchQueue.main.async { focusedField = .addressBar }
+                    return nil
+                case "r":
+                    DispatchQueue.main.async { model.activeTab?.reload() }
+                    return nil
+                case "[":
+                    DispatchQueue.main.async { model.activeTab?.goBack() }
+                    return nil
+                case "]":
+                    DispatchQueue.main.async { model.activeTab?.goForward() }
+                    return nil
+                case "T" where shift:
+                    DispatchQueue.main.async {
+                        if let url = model.closedTabURLs.popLast() { model.newTab(url: url) }
+                    }
+                    return nil
+                default: break
+                }
+            }
+            return event
+        }
     }
 }
 
@@ -88,28 +148,26 @@ struct TabBarView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 1) {
                     ForEach(Array(model.tabs.enumerated()), id: \.element.id) { idx, tab in
-                        TabCell(
-                            tab:      tab,
-                            isActive: idx == model.activeTabIndex
-                        ) {
-                            // Select tab and leave search mode
-                            model.activeTabIndex = idx
-                            showSearch = false
-                            if let url = tab.url?.absoluteString, url != "about:blank" {
-                                addressBarText = url
+                        TabCell(tab: tab, isActive: idx == model.activeTabIndex) {
+                            withAnimation(.easeInOut(duration: 0.1)) {
+                                model.activeTabIndex = idx
+                                showSearch = false
+                                if let url = tab.url?.absoluteString, url != "about:blank" {
+                                    addressBarText = url
+                                } else {
+                                    addressBarText = ""
+                                }
                             }
                         } onClose: {
+                            model.closedTabURLs.append(contentsOf: [tab.url].compactMap { $0 })
                             model.closeTab(id: tab.id)
                         }
                     }
                 }
                 .padding(.horizontal, 6)
             }
-            // New tab button
             Button {
-                model.newTab()
-                showSearch     = false
-                addressBarText = ""
+                model.newTab(); showSearch = false; addressBarText = ""
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .medium))
@@ -117,6 +175,7 @@ struct TabBarView: View {
             }
             .buttonStyle(.plain)
             .padding(.trailing, 6)
+            .help("New Tab (⌘T)")
         }
         .frame(height: 36)
         .background(Color(NSColor.windowBackgroundColor))
@@ -132,21 +191,22 @@ struct TabCell: View {
     var body: some View {
         HStack(spacing: 5) {
             if tab.isLoading {
-                ProgressView().scaleEffect(0.5).frame(width: 13, height: 13)
+                ProgressView().scaleEffect(0.5).frame(width: 14, height: 14)
             } else {
                 Image(systemName: "globe")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
-            Text(tab.title.prefix(24))
+            Text(tab.title.prefix(26))
                 .font(.system(size: 12))
                 .lineLimit(1)
-                .frame(maxWidth: 160, alignment: .leading)
+                .frame(maxWidth: 165, alignment: .leading)
             Button {
                 onClose()
             } label: {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
-                    .frame(width: 14, height: 14)
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .frame(width: 16, height: 16)
             }
             .buttonStyle(.plain)
             .opacity(0.5)
@@ -156,8 +216,8 @@ struct TabCell: View {
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isActive
-                    ? Color(NSColor.selectedContentBackgroundColor).opacity(0.18)
-                    : Color.clear)
+                      ? Color(NSColor.selectedContentBackgroundColor).opacity(0.2)
+                      : Color.clear)
         )
         .contentShape(Rectangle())
         .onTapGesture { onSelect() }
@@ -174,53 +234,52 @@ struct ToolbarView: View {
     @Binding var showHistory:    Bool
     @Binding var showBookmarks:  Bool
     @Binding var showStats:      Bool
+    @FocusState.Binding var focusedField: FocusField?
 
     var body: some View {
         HStack(spacing: 5) {
-            // ── Nav buttons ───────────────────────────────────────────────────
+            // Back
             Button { model.activeTab?.goBack() } label: {
                 Image(systemName: "chevron.left").font(.system(size: 13, weight: .medium))
             }
             .disabled(!(model.activeTab?.canGoBack ?? false))
-            .keyboardShortcut("[", modifiers: .command)
+            .help("Back (⌘[)")
 
+            // Forward
             Button { model.activeTab?.goForward() } label: {
                 Image(systemName: "chevron.right").font(.system(size: 13, weight: .medium))
             }
             .disabled(!(model.activeTab?.canGoForward ?? false))
-            .keyboardShortcut("]", modifiers: .command)
+            .help("Forward (⌘])")
 
+            // Reload / Stop
             Button {
-                if model.activeTab?.isLoading == true {
-                    model.activeTab?.stopLoad()
-                } else {
-                    model.activeTab?.reload()
-                }
+                if model.activeTab?.isLoading == true { model.activeTab?.stopLoad() }
+                else                                   { model.activeTab?.reload()  }
             } label: {
                 Image(systemName: model.activeTab?.isLoading == true
                       ? "xmark" : "arrow.clockwise")
                     .font(.system(size: 13, weight: .medium))
             }
-            .keyboardShortcut("r", modifiers: .command)
+            .help("Reload (⌘R)")
 
-            // ── Address / search bar ──────────────────────────────────────────
+            // Address / search bar
             AddressBar(
-                text:      $addressBarText,
-                isLoading: model.activeTab?.isLoading ?? false,
-                progress:  model.activeTab?.loadProgress ?? 0
+                text:         $addressBarText,
+                isLoading:    model.activeTab?.isLoading ?? false,
+                progress:     model.activeTab?.loadProgress ?? 0,
+                focusedField: $focusedField
             ) { committed in
                 commitInput(committed)
             }
 
-            // ── Bookmark ──────────────────────────────────────────────────────
+            // Bookmark
             Button {
                 let url   = model.activeTab?.url?.absoluteString ?? ""
-                let title = model.activeTab?.title ?? ""
-                guard !url.isEmpty else { return }
-                if model.isBookmarked(url: url) {
-                    if let bm = model.bookmarks.first(where: { $0.url == url }) {
-                        model.removeBookmark(id: bm.id)
-                    }
+                let title = model.activeTab?.title ?? url
+                guard !url.isEmpty, url != "about:blank" else { return }
+                if let bm = model.bookmarks.first(where: { $0.url == url }) {
+                    model.removeBookmark(id: bm.id)
                 } else {
                     model.addBookmark(url: url, title: title)
                 }
@@ -230,10 +289,14 @@ struct ToolbarView: View {
                     .font(.system(size: 13))
                     .foregroundColor(model.isBookmarked(url: url) ? .yellow : .secondary)
             }
+            .help("Bookmark")
 
             Button { showHistory.toggle()   } label: { Image(systemName: "clock").font(.system(size: 13)) }
+                .help("History")
             Button { showBookmarks.toggle() } label: { Image(systemName: "bookmark").font(.system(size: 13)) }
+                .help("Bookmarks")
             Button { showStats.toggle()     } label: { Image(systemName: "chart.bar").font(.system(size: 13)) }
+                .help("Index stats")
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 10)
@@ -244,32 +307,24 @@ struct ToolbarView: View {
         let text = raw.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
 
-        // Explicit URL
         if text.hasPrefix("http://") || text.hasPrefix("https://") {
             if let u = URL(string: text) {
-                showSearch = false
-                addressBarText = text
-                model.navigate(to: u)
+                showSearch = false; addressBarText = text; model.navigate(to: u)
             }
             return
         }
-        // Domain name (single token with a dot, no spaces)
-        if !text.contains(" "),
-           text.contains("."),
-           !text.hasPrefix("."),
-           !text.hasSuffix(".") {
+        // Domain heuristic: single token, contains dot, no spaces
+        if !text.contains(" "), text.contains("."),
+           !text.hasPrefix("."), !text.hasSuffix("."),
+           text.components(separatedBy: ".").allSatisfy({ !$0.isEmpty }) {
             let urlStr = "https://\(text)"
             if let u = URL(string: urlStr) {
-                showSearch = false
-                addressBarText = urlStr
-                model.navigate(to: u)
+                showSearch = false; addressBarText = urlStr; model.navigate(to: u)
+                return
             }
-            return
         }
         // Everything else → search
-        showSearch = true
-        addressBarText = text
-        model.performSearch(query: text)
+        showSearch = true; addressBarText = text; model.performSearch(query: text)
     }
 }
 
@@ -279,8 +334,8 @@ struct AddressBar: View {
     @Binding var text:  String
     let isLoading:      Bool
     let progress:       Double
+    @FocusState.Binding var focusedField: FocusField?
     let onSubmit:       (String) -> Void
-    @FocusState private var focused: Bool
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -297,9 +352,11 @@ struct AddressBar: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .padding(.horizontal, 10)
-                .focused($focused)
+                .focused($focusedField, equals: .addressBar)
                 .onSubmit { onSubmit(text) }
-                .onExitCommand { focused = false }
+                .onExitCommand {
+                    focusedField = nil
+                }
         }
         .frame(height: 28)
         .background(
@@ -307,8 +364,9 @@ struct AddressBar: View {
                 .fill(Color(NSColor.textBackgroundColor))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(focused ? Color.accentColor : Color.gray.opacity(0.3),
-                                lineWidth: focused ? 1.5 : 0.5)
+                        .stroke(focusedField == .addressBar
+                                ? Color.accentColor : Color.gray.opacity(0.3),
+                                lineWidth: focusedField == .addressBar ? 1.5 : 0.5)
                 )
         )
     }
@@ -342,69 +400,76 @@ struct SearchResultsView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
-                if model.isSearching && model.searchResultKinds.isEmpty {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                // Seeding in-progress notice
+                if model.isSeedingIndex && model.searchResultKinds.isEmpty {
                     HStack(spacing: 10) {
                         ProgressView().scaleEffect(0.7)
-                        Text("Searching…").font(.system(size: 13)).foregroundColor(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Building index in background…")
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                            Text("Results will improve as more pages are indexed.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary.opacity(0.7))
+                        }
                     }
                     .padding(16)
                 }
 
-                if !model.searchResultKinds.isEmpty {
-                    ForEach(Array(model.searchResultKinds.enumerated()), id: \.offset) { _, kind in
-                        switch kind {
-                        case .knownSite(let site):
-                            KnownSiteRow(site: site) { navigate(to: site.url) }
-                        case .localIndex(let r):
-                            LocalIndexRow(result: r) { navigate(to: r.url) }
-                        case .grammarDiscovery(let g):
-                            GrammarRow(candidate: g) { navigate(to: g.url) }
-                        }
+                if model.isSearching && model.searchResultKinds.isEmpty {
+                    HStack(spacing: 10) {
+                        ProgressView().scaleEffect(0.7)
+                        Text("Searching local index…")
+                            .font(.system(size: 13)).foregroundColor(.secondary)
                     }
-                } else if !model.isSearching {
+                    .padding(16)
+                }
+
+                ForEach(Array(model.searchResultKinds.enumerated()), id: \.offset) { _, kind in
+                    switch kind {
+                    case .knownSite(let site):
+                        KnownSiteRow(site: site) { nav(site.url) }
+                    case .localIndex(let r):
+                        LocalIndexRow(result: r) { nav(r.url) }
+                    case .grammarDiscovery(let g):
+                        GrammarRow(candidate: g) { nav(g.url) }
+                    }
+                }
+
+                if !model.isSearching && model.searchResultKinds.isEmpty {
                     emptyState
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
         }
         .background(Color(NSColor.windowBackgroundColor))
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 14) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 32))
-                .foregroundColor(.secondary.opacity(0.5))
+                .font(.system(size: 36)).foregroundColor(.secondary.opacity(0.4))
             Text("No results for \"\(model.searchQuery)\"")
-                .font(.system(size: 14))
+                .font(.system(size: 15, weight: .medium))
                 .foregroundColor(.secondary)
-            if model.isSeedingIndex {
-                Text("Index is still building — try again in a moment.")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary.opacity(0.7))
-            } else {
-                Text("ALI is discovering relevant pages.")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary.opacity(0.7))
-            }
+            Text(model.isSeedingIndex
+                 ? "Index is still building. Try again in a moment."
+                 : "ALI is discovering relevant pages in the background.")
+                .font(.system(size: 12)).foregroundColor(.secondary.opacity(0.7))
         }
-        .frame(maxWidth: .infinity)
-        .padding(48)
+        .frame(maxWidth: .infinity).padding(60)
     }
 
-    private func navigate(to urlString: String) {
-        guard let u = URL(string: urlString) else { return }
-        showSearch     = false
-        addressBarText = urlString
-        model.navigate(to: u)
+    private func nav(_ urlStr: String) {
+        guard let u = URL(string: urlStr) else { return }
+        showSearch = false; addressBarText = urlStr; model.navigate(to: u)
     }
 }
 
 // MARK: - Result rows
 
-/// Known site result — large, prominent, shows official URL and description.
 struct KnownSiteRow: View {
     let site:   KnownSite
     let onOpen: () -> Void
@@ -412,61 +477,62 @@ struct KnownSiteRow: View {
     var body: some View {
         Button(action: onOpen) {
             HStack(spacing: 14) {
-                // Favicon placeholder coloured by category
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(categoryColor(site.category).opacity(0.15))
-                    .frame(width: 36, height: 36)
-                    .overlay(
-                        Text(String(site.name.prefix(2)).uppercased())
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(categoryColor(site.category))
-                    )
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(site.name)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.primary)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(catColor(site.category).opacity(0.15))
+                        .frame(width: 40, height: 40)
+                    Text(String(site.name.prefix(2)).uppercased())
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(catColor(site.category))
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(site.name)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.primary)
+                        Text(site.category.uppercased())
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.1))
+                            .cornerRadius(3)
+                    }
                     Text(site.url)
-                        .font(.system(size: 12))
-                        .foregroundColor(.accentColor)
+                        .font(.system(size: 12)).foregroundColor(.accentColor)
                     Text(site.description)
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 12)).foregroundColor(.secondary)
                         .lineLimit(1)
                 }
                 Spacer()
-                Image(systemName: "arrow.up.right.square")
-                    .font(.system(size: 14))
-                    .foregroundColor(.secondary)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 12)).foregroundColor(.secondary)
             }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 8)
-            .contentShape(Rectangle())
+            .padding(.vertical, 10).padding(.horizontal, 10).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
-        .cornerRadius(8)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+        .cornerRadius(10)
         .padding(.vertical, 3)
     }
 
-    private func categoryColor(_ cat: String) -> Color {
-        switch cat {
-        case "social":        return .blue
-        case "video":         return .red
-        case "news":          return .orange
-        case "tech":          return .green
-        case "reference":     return .purple
-        case "science":       return .cyan
-        case "education":     return .indigo
-        case "health":        return .pink
-        case "entertainment": return .yellow
-        case "travel":        return .mint
-        default:              return .gray
+    private func catColor(_ c: String) -> Color {
+        switch c {
+        case "social":     return .blue
+        case "video":      return .red
+        case "news":       return .orange
+        case "tech":       return .green
+        case "reference":  return .purple
+        case "science":    return .cyan
+        case "education":  return .indigo
+        case "health":     return .pink
+        case "entertainment": return Color(red: 0.9, green: 0.7, blue: 0)
+        case "travel":     return .mint
+        case "shopping":   return Color(red: 0.8, green: 0.4, blue: 0)
+        default:           return .gray
         }
     }
 }
 
-/// BM25 local index result — compact, shows title, URL, excerpt.
 struct LocalIndexRow: View {
     let result:  SearchResult
     let onOpen:  () -> Void
@@ -480,9 +546,7 @@ struct LocalIndexRow: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(result.url)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+                    .font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
                 if !result.excerpt.isEmpty {
                     Text(result.excerpt)
                         .font(.system(size: 12))
@@ -490,15 +554,13 @@ struct LocalIndexRow: View {
                         .lineLimit(3)
                 }
             }
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            .padding(.vertical, 10).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(Divider().opacity(0.25), alignment: .bottom)
+        .overlay(Divider().opacity(0.2), alignment: .bottom)
     }
 }
 
-/// Grammar discovery row — smaller, secondary, shown only for informational queries.
 struct GrammarRow: View {
     let candidate: GrammarCandidate
     let onOpen:    () -> Void
@@ -507,31 +569,23 @@ struct GrammarRow: View {
         Button(action: onOpen) {
             HStack(spacing: 10) {
                 Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 13)).foregroundColor(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(candidate.grammarName)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.primary)
+                        .font(.system(size: 13, weight: .medium)).foregroundColor(.primary)
                     Text(candidate.url)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                        .font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
                 }
                 Spacer()
                 Text("source")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.12))
-                    .cornerRadius(4)
+                    .font(.system(size: 10)).foregroundColor(.secondary)
+                    .padding(.horizontal, 5).padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.1)).cornerRadius(4)
             }
-            .padding(.vertical, 7)
-            .contentShape(Rectangle())
+            .padding(.vertical, 7).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(Divider().opacity(0.2), alignment: .bottom)
+        .overlay(Divider().opacity(0.15), alignment: .bottom)
     }
 }
 
@@ -545,8 +599,10 @@ struct HistoryView: View {
         NavigationView {
             List(model.history.prefix(300)) { item in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title.prefix(80)).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                    Text(item.url).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+                    Text(item.title.prefix(80))
+                        .font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    Text(item.url)
+                        .font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
                     Text(item.visitedAt.formatted(date: .abbreviated, time: .shortened))
                         .font(.system(size: 10)).foregroundColor(.secondary.opacity(0.6))
                 }
@@ -554,11 +610,13 @@ struct HistoryView: View {
             }
             .navigationTitle("History")
             .toolbar {
-                ToolbarItem { Button("Done")  { dismiss() } }
-                ToolbarItem { Button("Clear") { model.history = []; model.savePersisted() } }
+                ToolbarItem(placement: .primaryAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .destructiveAction) {
+                    Button("Clear") { model.history = []; model.savePersisted() }
+                }
             }
         }
-        .frame(width: 520, height: 520)
+        .frame(width: 540, height: 520)
     }
 }
 
@@ -574,25 +632,26 @@ struct BookmarksView: View {
                 ForEach(model.bookmarks) { bm in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(bm.title.prefix(60)).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                            Text(bm.url).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+                            Text(bm.title.prefix(60))
+                                .font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            Text(bm.url)
+                                .font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
                         }
                         Spacer()
                         Button("Open") {
                             if let u = URL(string: bm.url) { model.navigate(to: u) }
                             dismiss()
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .buttonStyle(.bordered).controlSize(.small)
                     }
                     .padding(.vertical, 2)
                 }
                 .onDelete { idx in idx.forEach { model.removeBookmark(id: model.bookmarks[$0].id) } }
             }
             .navigationTitle("Bookmarks")
-            .toolbar { ToolbarItem { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .primaryAction) { Button("Done") { dismiss() } } }
         }
-        .frame(width: 520, height: 420)
+        .frame(width: 540, height: 420)
     }
 }
 
@@ -607,22 +666,36 @@ struct StatsView: View {
             Text("ALI Engine").font(.title2.bold())
 
             if model.isSeedingIndex {
-                HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text(model.seedingStatus).font(.system(size: 12))
+                    }
                     ProgressView(value: model.seedingProgress)
-                    Text("Building index…").font(.system(size: 12)).foregroundColor(.secondary)
                 }
+                .padding(10)
+                .background(Color.accentColor.opacity(0.05))
+                .cornerRadius(8)
             }
 
-            Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 12) {
-                GridRow { s("Documents", "\(model.stats.docCount)")
-                           s("Segments", "\(model.stats.segmentCount)") }
-                GridRow { s("Index size", ByteCountFormatter.string(
-                                fromByteCount: Int64(model.stats.indexBytes), countStyle: .file))
-                           s("Sources", "\(model.stats.sourceCount)") }
-                GridRow { s("Nav edges", "\(model.stats.navEdgeCount)")
-                           s("Grammars", "\(model.stats.grammarCount)") }
-                GridRow { s("History", "\(model.history.count)")
-                           s("Bookmarks", "\(model.bookmarks.count)") }
+            Grid(alignment: .leading, horizontalSpacing: 32, verticalSpacing: 12) {
+                GridRow {
+                    statCell("Documents", "\(model.stats.docCount)")
+                    statCell("Segments",  "\(model.stats.segmentCount)")
+                }
+                GridRow {
+                    statCell("Index size", ByteCountFormatter.string(
+                        fromByteCount: Int64(model.stats.indexBytes), countStyle: .file))
+                    statCell("Sources", "\(model.stats.sourceCount)")
+                }
+                GridRow {
+                    statCell("Nav edges",   "\(model.stats.navEdgeCount)")
+                    statCell("Grammars",    "\(model.stats.grammarCount)")
+                }
+                GridRow {
+                    statCell("History",   "\(model.history.count)")
+                    statCell("Bookmarks", "\(model.bookmarks.count)")
+                }
             }
             Divider()
             HStack {
@@ -635,7 +708,7 @@ struct StatsView: View {
         .frame(width: 380)
     }
 
-    private func s(_ label: String, _ value: String) -> some View {
+    private func statCell(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.system(size: 11)).foregroundColor(.secondary)
             Text(value).font(.system(size: 15, weight: .semibold)).monospacedDigit()
